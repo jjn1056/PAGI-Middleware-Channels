@@ -86,6 +86,13 @@ async sub disconnect {
 
 sub connected { shift->{_connected} }
 
+# Auto-connect on first use
+async sub _ensure_connected {
+    my ($self) = @_;
+    return if $self->{_connected};
+    await $self->connect();
+}
+
 sub set_channel_id {
     my ($self, $channel_id) = @_;
     $self->{_channel_id} = $channel_id;
@@ -177,6 +184,7 @@ async sub poll {
 async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
 
+    await $self->_ensure_connected();
     my $key = $self->_group_key($topic);
     await $self->{_redis}->sadd($key, $channel);
     await $self->{_redis}->expire($key, $self->{group_expiry});
@@ -254,6 +262,7 @@ async sub punsubscribe {
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
 
+    await $self->_ensure_connected();
     my $exclude = $opts{exclude} // [];
     $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
     my %excluded = map { $_ => 1 } @$exclude;
@@ -323,6 +332,9 @@ async sub flush {
 # Cleanup channel
 async sub cleanup {
     my ($self, $channel) = @_;
+
+    # Not connected, nothing to cleanup
+    return 1 unless $self->{_redis};
 
     # Remove queue
     await $self->{_redis}->del($self->_queue_key($channel));
@@ -397,6 +409,7 @@ async sub untrack {
 async sub list_presence {
     my ($self, $topic) = @_;
 
+    await $self->_ensure_connected();
     my $key = $self->_presence_key($topic);
     my $data_ref = await $self->{_redis}->hgetall($key);
 
