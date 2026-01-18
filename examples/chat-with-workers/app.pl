@@ -37,70 +37,68 @@ my $chat_app = async sub {
         presence => { user => $username, channel => $my_channel }
     );
 
-    # Main event loop
-    eval {
-        while (1) {
-            my $event = await $receive->();
+    # Main event loop - errors propagate to PAGI::Server
+    while (1) {
+        my $event = await $receive->();
 
-            if (($event->{type} // '') eq 'websocket.receive') {
-                my $data = decode_json($event->{text});
+        if (($event->{type} // '') eq 'websocket.receive') {
+            my $data = decode_json($event->{text});
 
-                if ($data->{action} eq 'message') {
-                    # Broadcast to room
-                    await $ch->publish("chat.$room", {
-                        type => 'chat.message',
-                        user => $username,
-                        text => $data->{text},
-                        timestamp => time(),
-                    }, exclude => $my_channel);
-                }
-                elsif ($data->{action} eq 'process_image') {
-                    # Send to worker pool
-                    await $ch->send('worker.pool', {
-                        type     => 'task.process_image',
-                        image_id => $data->{image_id},
-                        reply_to => $my_channel,
-                    });
-                }
+            if ($data->{action} eq 'message') {
+                # Broadcast to room
+                await $ch->publish("chat.$room", {
+                    type => 'chat.message',
+                    user => $username,
+                    text => $data->{text},
+                    timestamp => time(),
+                }, exclude => $my_channel);
             }
-            elsif (($event->{type} // '') eq 'chat.message') {
-                # Forward to client
-                await $send->({
-                    type => 'websocket.send',
-                    text => encode_json($event),
+            elsif ($data->{action} eq 'process_image') {
+                # Send to worker pool
+                await $ch->send('worker.pool', {
+                    type     => 'task.process_image',
+                    image_id => $data->{image_id},
+                    reply_to => $my_channel,
                 });
-            }
-            elsif (($event->{type} // '') eq 'presence.join') {
-                await $send->({
-                    type => 'websocket.send',
-                    text => encode_json({
-                        type => 'user_joined',
-                        user => $event->{presence}{user},
-                    }),
-                });
-            }
-            elsif (($event->{type} // '') eq 'presence.leave') {
-                await $send->({
-                    type => 'websocket.send',
-                    text => encode_json({
-                        type => 'user_left',
-                        user => $event->{presence}{user},
-                    }),
-                });
-            }
-            elsif (($event->{type} // '') eq 'task.result') {
-                await $send->({
-                    type => 'websocket.send',
-                    text => encode_json($event),
-                });
-            }
-            elsif (($event->{type} // '') eq 'websocket.disconnect') {
-                last;
             }
         }
-    };
+        elsif (($event->{type} // '') eq 'chat.message') {
+            # Forward to client
+            await $send->({
+                type => 'websocket.send',
+                text => encode_json($event),
+            });
+        }
+        elsif (($event->{type} // '') eq 'presence.join') {
+            await $send->({
+                type => 'websocket.send',
+                text => encode_json({
+                    type => 'user_joined',
+                    user => $event->{presence}{user},
+                }),
+            });
+        }
+        elsif (($event->{type} // '') eq 'presence.leave') {
+            await $send->({
+                type => 'websocket.send',
+                text => encode_json({
+                    type => 'user_left',
+                    user => $event->{presence}{user},
+                }),
+            });
+        }
+        elsif (($event->{type} // '') eq 'task.result') {
+            await $send->({
+                type => 'websocket.send',
+                text => encode_json($event),
+            });
+        }
+        elsif (($event->{type} // '') eq 'websocket.disconnect') {
+            last;
+        }
+    }
 
-    # Cleanup happens automatically
+    # Cleanup happens automatically via wrap()
 };
 
 my $app = $channels->wrap($chat_app);
