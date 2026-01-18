@@ -25,22 +25,24 @@ cd t && docker compose up -d
 
 **Terminal 2: App (with multiple workers)**
 ```bash
-PAGI_CHANNELS_BACKEND=redis://localhost:6379 pagi-server --workers 4 examples/chat/app.pl
+cd examples/chat
+PAGI_CHANNELS_BACKEND=redis://localhost:6379 pagi-server --workers 4 app.pl
 ```
 
-## Testing
-
-Connect multiple WebSocket clients to different rooms:
-
-```
-ws://localhost:8000/chat/general?user=alice
-ws://localhost:8000/chat/general?user=bob
+**Terminal 3: Serve the HTML**
+```bash
+cd examples/chat
+python3 -m http.server 3000
 ```
 
-Messages from Alice will appear for Bob (and vice versa), even if they're being handled by different worker processes.
+**Browser: Open the chat UI**
+- Open http://localhost:3000 in multiple browser windows
+- Enter different usernames and connect
+- Messages and presence updates flow between all clients
 
 ## Features
 
 - **Room-based chat**: `/chat/{room}` path routing
 - **Presence tracking**: `presence.join` and `presence.leave` events
 - **Message exclusion**: Sender doesn't receive their own messages
+- **Web UI**: Simple HTML/JS frontend in `index.html`
