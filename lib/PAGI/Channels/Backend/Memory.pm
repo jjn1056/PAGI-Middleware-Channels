@@ -126,8 +126,25 @@ async sub subscribe {
     $self->_validate_channel($channel);
     $self->_validate_channel($topic);  # Same rules for topics
 
+    my $now = time();
+    my $is_new = !exists $self->{groups}{$topic}{$channel};
+
     $self->{groups}{$topic} //= {};
-    $self->{groups}{$topic}{$channel} = time() + $self->{group_expiry};
+    $self->{groups}{$topic}{$channel} = $now + $self->{group_expiry};
+
+    # Handle presence option
+    if (my $presence_data = $opts{presence}) {
+        $self->{presence}{$topic} //= {};
+        $self->{presence}{$topic}{$channel} = {
+            data    => $presence_data,
+            expires => $now + $self->{group_expiry},
+        };
+
+        # Broadcast presence.join to other subscribers (if new)
+        if ($is_new) {
+            await $self->_broadcast_presence_event($topic, 'presence.join', $presence_data, $channel);
+        }
+    }
 
     return 1;
 }
@@ -136,11 +153,35 @@ async sub subscribe {
 async sub unsubscribe {
     my ($self, $channel, $topic) = @_;
 
+    my $presence_data;
+    if ($self->{presence}{$topic} && $self->{presence}{$topic}{$channel}) {
+        $presence_data = $self->{presence}{$topic}{$channel}{data};
+        delete $self->{presence}{$topic}{$channel};
+    }
+
     if ($self->{groups}{$topic}) {
         delete $self->{groups}{$topic}{$channel};
     }
 
+    # Broadcast presence.leave if had presence
+    if ($presence_data) {
+        await $self->_broadcast_presence_event($topic, 'presence.leave', $presence_data, $channel);
+    }
+
     return 1;
+}
+
+# Helper for presence events
+async sub _broadcast_presence_event {
+    my ($self, $topic, $event_type, $presence_data, $exclude_channel) = @_;
+
+    my $event = {
+        type     => $event_type,
+        topic    => $topic,
+        presence => $presence_data,
+    };
+
+    await $self->publish($topic, $event, exclude => $exclude_channel);
 }
 
 # Helper for delivery
@@ -207,7 +248,17 @@ async sub flush {
     $self->{delayed} = [];
     return 1;
 }
+
 async sub cleanup { return 1 }
+
+# Channel ID management (for presence tracking)
+sub set_channel_id {
+    my ($self, $channel_id) = @_;
+    $self->{_channel_id} = $channel_id;
+}
+
+sub channel_id { shift->{_channel_id} }
+
 # PubSub: psubscribe (pattern subscribe)
 async sub psubscribe {
     my ($self, $channel, $pattern) = @_;
@@ -243,9 +294,55 @@ async sub punsubscribe {
 
     return 1;
 }
-async sub track { return 1 }
-async sub untrack { return 1 }
-async sub list_presence { return [] }
+# Presence: track
+async sub track {
+    my ($self, $topic, $presence_data) = @_;
+
+    my $channel = $self->{_channel_id}
+        or die "track() requires set_channel_id() first";
+
+    $self->_validate_channel($topic);
+
+    my $now = time();
+    $self->{presence}{$topic} //= {};
+    $self->{presence}{$topic}{$channel} = {
+        data    => $presence_data,
+        expires => $now + $self->{group_expiry},
+    };
+
+    return 1;
+}
+
+# Presence: untrack
+async sub untrack {
+    my ($self, $topic) = @_;
+
+    my $channel = $self->{_channel_id}
+        or die "untrack() requires set_channel_id() first";
+
+    if ($self->{presence}{$topic}) {
+        delete $self->{presence}{$topic}{$channel};
+    }
+
+    return 1;
+}
+
+# Presence: list_presence
+async sub list_presence {
+    my ($self, $topic) = @_;
+
+    my $entries = $self->{presence}{$topic} // {};
+    my $now = time();
+
+    my @result;
+    for my $channel (keys %$entries) {
+        my $entry = $entries->{$channel};
+        next if $entry->{expires} < $now;
+        push @result, $entry->{data};
+    }
+
+    return @result;
+}
 async sub send_delayed { return 1 }
 async sub publish_delayed { return 1 }
 async sub subscribe_with_history { return 1 }
