@@ -4,6 +4,7 @@ use warnings;
 use Future::AsyncAwait;
 use Future;
 use Role::Tiny::With;
+use Time::HiRes ();
 use namespace::clean;
 
 with 'PAGI::Channels::Backend';
@@ -343,8 +344,69 @@ async sub list_presence {
 
     return @result;
 }
-async sub send_delayed { return 1 }
-async sub publish_delayed { return 1 }
+# Delayed: send_delayed
+async sub send_delayed {
+    my ($self, $channel, $message, $delay_seconds) = @_;
+
+    $self->_validate_channel($channel);
+    $self->_validate_message($message);
+
+    my $deliver_at = Time::HiRes::time() + $delay_seconds;
+
+    push @{$self->{delayed}}, {
+        deliver_at => $deliver_at,
+        type       => 'send',
+        target     => $channel,
+        message    => $message,
+    };
+
+    # Keep sorted by delivery time
+    @{$self->{delayed}} = sort { $a->{deliver_at} <=> $b->{deliver_at} } @{$self->{delayed}};
+
+    return 1;
+}
+
+# Delayed: publish_delayed
+async sub publish_delayed {
+    my ($self, $topic, $message, $delay_seconds) = @_;
+
+    $self->_validate_channel($topic);
+    $self->_validate_message($message);
+
+    my $deliver_at = Time::HiRes::time() + $delay_seconds;
+
+    push @{$self->{delayed}}, {
+        deliver_at => $deliver_at,
+        type       => 'publish',
+        target     => $topic,
+        message    => $message,
+    };
+
+    @{$self->{delayed}} = sort { $a->{deliver_at} <=> $b->{deliver_at} } @{$self->{delayed}};
+
+    return 1;
+}
+
+# Delayed: process_delayed (called periodically or on poll)
+async sub process_delayed {
+    my ($self) = @_;
+
+    my $now = Time::HiRes::time();
+
+    while (@{$self->{delayed}} && $self->{delayed}[0]{deliver_at} <= $now) {
+        my $entry = shift @{$self->{delayed}};
+
+        if ($entry->{type} eq 'send') {
+            await $self->send($entry->{target}, $entry->{message});
+        }
+        elsif ($entry->{type} eq 'publish') {
+            await $self->publish($entry->{target}, $entry->{message});
+        }
+    }
+
+    return 1;
+}
+
 async sub subscribe_with_history { return 1 }
 
 1;
