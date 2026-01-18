@@ -98,10 +98,66 @@ sub _validate_message {
     die "InvalidMessage: missing type" unless defined $message->{type};
 }
 
-# Stubs for required methods (implemented in later tasks)
-async sub subscribe { return 1 }
-async sub unsubscribe { return 1 }
-async sub publish { return 1 }
+# PubSub: subscribe
+async sub subscribe {
+    my ($self, $channel, $topic, %opts) = @_;
+
+    $self->_validate_channel($channel);
+    $self->_validate_channel($topic);  # Same rules for topics
+
+    $self->{groups}{$topic} //= {};
+    $self->{groups}{$topic}{$channel} = time() + $self->{group_expiry};
+
+    return 1;
+}
+
+# PubSub: unsubscribe
+async sub unsubscribe {
+    my ($self, $channel, $topic) = @_;
+
+    if ($self->{groups}{$topic}) {
+        delete $self->{groups}{$topic}{$channel};
+    }
+
+    return 1;
+}
+
+# PubSub: publish
+async sub publish {
+    my ($self, $topic, $message, %opts) = @_;
+
+    $self->_validate_channel($topic);
+    $self->_validate_message($message);
+
+    my $exclude = $opts{exclude} // [];
+    $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
+    my %excluded = map { $_ => 1 } @$exclude;
+
+    my $members = $self->{groups}{$topic} // {};
+    my $now = time();
+
+    for my $channel (keys %$members) {
+        # Skip expired memberships
+        next if $members->{$channel} < $now;
+
+        # Skip excluded
+        next if $excluded{$channel};
+
+        # Send (silently drop if full)
+        $self->{queues}{$channel} //= [];
+        my $queue = $self->{queues}{$channel};
+
+        if (@$queue < $self->{capacity}) {
+            push @$queue, {
+                msg     => $message,
+                expires => $now + $self->{expiry},
+            };
+        }
+        # else: silently drop (at-most-once semantics)
+    }
+
+    return 1;
+}
 async sub flush {
     my ($self) = @_;
     $self->{queues} = {};
