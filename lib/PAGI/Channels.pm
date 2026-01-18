@@ -41,6 +41,139 @@ sub _init_backend {
 
 sub backend { shift->{_backend} }
 
+sub wrap {
+    my ($self, $inner_app) = @_;
+
+    return async sub {
+        my ($scope, $receive, $send) = @_;
+
+        # 1. Generate unique channel name
+        my $channel_name = $self->_generate_channel_name();
+
+        # 2. Inject scope keys
+        $scope->{'pagi.channels'} = $self->_create_channel_interface($channel_name);
+        $scope->{'pagi.channel'} = $channel_name;
+
+        # 3. Wrap receive to interleave channel messages
+        my $wrapped_receive = async sub {
+            # Check channel queue first (non-blocking)
+            if (my $msg = $self->{_backend}->poll($channel_name)) {
+                return $msg;
+            }
+            # Fall through to protocol receive
+            return await $receive->();
+        };
+
+        # 4. Call inner app with error handling
+        my $err;
+        eval { await $inner_app->($scope, $wrapped_receive, $send) };
+        $err = $@;
+
+        # 5. Always cleanup
+        await $self->{_backend}->cleanup($channel_name);
+
+        # Re-throw if error
+        die $err if $err;
+    };
+}
+
+sub _generate_channel_name {
+    my ($self) = @_;
+    $self->{_counter}++;
+    return sprintf("conn.%d.%d.%d", $$, time(), $self->{_counter});
+}
+
+# Create a scoped interface for this channel
+sub _create_channel_interface {
+    my ($self, $channel_name) = @_;
+
+    # Set channel_id on backend for presence operations
+    $self->{_backend}->set_channel_id($channel_name);
+
+    return PAGI::Channels::Interface->new(
+        backend      => $self->{_backend},
+        channel_name => $channel_name,
+    );
+}
+
+# Nested class for per-connection interface
+package PAGI::Channels::Interface;
+use Future::AsyncAwait;
+
+sub new {
+    my ($class, %args) = @_;
+    return bless \%args, $class;
+}
+
+sub backend { shift->{backend} }
+sub channel_name { shift->{channel_name} }
+
+async sub send {
+    my ($self, $channel, $message, %opts) = @_;
+    my $delay = delete $opts{delay};
+    if ($delay) {
+        return await $self->{backend}->send_delayed($channel, $message, $delay);
+    }
+    return await $self->{backend}->send($channel, $message);
+}
+
+async sub subscribe {
+    my ($self, $topic, %opts) = @_;
+    my $history = delete $opts{history};
+    if ($history) {
+        return await $self->{backend}->subscribe_with_history(
+            $self->{channel_name}, $topic, $history, %opts
+        );
+    }
+    return await $self->{backend}->subscribe($self->{channel_name}, $topic, %opts);
+}
+
+async sub unsubscribe {
+    my ($self, $topic) = @_;
+    return await $self->{backend}->unsubscribe($self->{channel_name}, $topic);
+}
+
+async sub publish {
+    my ($self, $topic, $message, %opts) = @_;
+    my $delay = delete $opts{delay};
+    if ($delay) {
+        return await $self->{backend}->publish_delayed($topic, $message, $delay);
+    }
+    return await $self->{backend}->publish($topic, $message, %opts);
+}
+
+async sub psubscribe {
+    my ($self, $pattern) = @_;
+    return await $self->{backend}->psubscribe($self->{channel_name}, $pattern);
+}
+
+async sub punsubscribe {
+    my ($self, $pattern) = @_;
+    return await $self->{backend}->punsubscribe($self->{channel_name}, $pattern);
+}
+
+async sub track {
+    my ($self, $topic, $presence_data) = @_;
+    return await $self->{backend}->track($topic, $presence_data);
+}
+
+async sub untrack {
+    my ($self, $topic) = @_;
+    return await $self->{backend}->untrack($topic);
+}
+
+async sub list_presence {
+    my ($self, $topic) = @_;
+    return await $self->{backend}->list_presence($topic);
+}
+
+# Django Channels compatibility aliases
+*group_add = \&subscribe;
+*group_discard = \&unsubscribe;
+*group_send = \&publish;
+
+package PAGI::Channels;
+
 1;
 
 __END__
