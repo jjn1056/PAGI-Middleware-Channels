@@ -98,6 +98,27 @@ sub _validate_message {
     die "InvalidMessage: missing type" unless defined $message->{type};
 }
 
+# Helper to convert pattern to regex
+sub _pattern_to_regex {
+    my ($self, $pattern) = @_;
+
+    # Escape special regex chars except our wildcards
+    my $regex = quotemeta($pattern);
+
+    # ** matches zero or more segments (including dots)
+    # When ** follows a dot (e.g., "foo.**"), make the dot optional
+    # so "foo.**" matches "foo", "foo.bar", "foo.bar.baz"
+    $regex =~ s/\\\.\\\*\\\*/(\\..*)?\$/g;
+
+    # Handle ** at the beginning or not preceded by a dot
+    $regex =~ s/\\\*\\\*/.*/g;
+
+    # * matches exactly one segment (no dots)
+    $regex =~ s/\\\*/[^.]+/g;
+
+    return qr/^$regex$/;
+}
+
 # PubSub: subscribe
 async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
@@ -122,6 +143,21 @@ async sub unsubscribe {
     return 1;
 }
 
+# Helper for delivery
+sub _deliver_to_channel {
+    my ($self, $channel, $message, $now) = @_;
+
+    $self->{queues}{$channel} //= [];
+    my $queue = $self->{queues}{$channel};
+
+    if (@$queue < $self->{capacity}) {
+        push @$queue, {
+            msg     => $message,
+            expires => $now + $self->{expiry},
+        };
+    }
+}
+
 # PubSub: publish
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
@@ -133,27 +169,30 @@ async sub publish {
     $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
     my %excluded = map { $_ => 1 } @$exclude;
 
-    my $members = $self->{groups}{$topic} // {};
     my $now = time();
+    my %delivered;  # Track to avoid duplicates
 
+    # Direct group subscribers
+    my $members = $self->{groups}{$topic} // {};
     for my $channel (keys %$members) {
-        # Skip expired memberships
         next if $members->{$channel} < $now;
-
-        # Skip excluded
         next if $excluded{$channel};
+        $self->_deliver_to_channel($channel, $message, $now);
+        $delivered{$channel} = 1;
+    }
 
-        # Send (silently drop if full)
-        $self->{queues}{$channel} //= [];
-        my $queue = $self->{queues}{$channel};
+    # Pattern subscribers
+    for my $channel (keys %{$self->{patterns}}) {
+        next if $excluded{$channel};
+        next if $delivered{$channel};  # Already delivered via exact match
 
-        if (@$queue < $self->{capacity}) {
-            push @$queue, {
-                msg     => $message,
-                expires => $now + $self->{expiry},
-            };
+        for my $p (@{$self->{patterns}{$channel}}) {
+            if ($topic =~ $p->{regex}) {
+                $self->_deliver_to_channel($channel, $message, $now);
+                $delivered{$channel} = 1;
+                last;  # Only deliver once per channel
+            }
         }
-        # else: silently drop (at-most-once semantics)
     }
 
     return 1;
@@ -169,8 +208,41 @@ async sub flush {
     return 1;
 }
 async sub cleanup { return 1 }
-async sub psubscribe { return 1 }
-async sub punsubscribe { return 1 }
+# PubSub: psubscribe (pattern subscribe)
+async sub psubscribe {
+    my ($self, $channel, $pattern) = @_;
+
+    $self->_validate_channel($channel);
+
+    my $regex = $self->_pattern_to_regex($pattern);
+
+    $self->{patterns}{$channel} //= [];
+
+    # Avoid duplicate patterns
+    for my $p (@{$self->{patterns}{$channel}}) {
+        return 1 if $p->{pattern} eq $pattern;
+    }
+
+    push @{$self->{patterns}{$channel}}, {
+        pattern => $pattern,
+        regex   => $regex,
+    };
+
+    return 1;
+}
+
+# PubSub: punsubscribe (pattern unsubscribe)
+async sub punsubscribe {
+    my ($self, $channel, $pattern) = @_;
+
+    if ($self->{patterns}{$channel}) {
+        $self->{patterns}{$channel} = [
+            grep { $_->{pattern} ne $pattern } @{$self->{patterns}{$channel}}
+        ];
+    }
+
+    return 1;
+}
 async sub track { return 1 }
 async sub untrack { return 1 }
 async sub list_presence { return [] }
