@@ -211,8 +211,22 @@ async sub publish {
     $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
     my %excluded = map { $_ => 1 } @$exclude;
 
-    my $now = time();
+    my $now = Time::HiRes::time();
     my %delivered;  # Track to avoid duplicates
+
+    # Store in history buffer (if history enabled and not a presence event)
+    if ($self->{history_size} > 0 && $message->{type} !~ /^presence\./) {
+        $self->{history}{$topic} //= [];
+        push @{$self->{history}{$topic}}, {
+            message   => $message,
+            timestamp => $now,
+        };
+
+        # Trim to history_size
+        while (@{$self->{history}{$topic}} > $self->{history_size}) {
+            shift @{$self->{history}{$topic}};
+        }
+    }
 
     # Direct group subscribers
     my $members = $self->{groups}{$topic} // {};
@@ -407,7 +421,34 @@ async sub process_delayed {
     return 1;
 }
 
-async sub subscribe_with_history { return 1 }
+# History: subscribe_with_history
+async sub subscribe_with_history {
+    my ($self, $channel, $topic, $history_count, %opts) = @_;
+
+    $self->_validate_channel($channel);
+    $self->_validate_channel($topic);
+
+    my $now = Time::HiRes::time();
+
+    # Deliver history first
+    if ($history_count > 0 && $self->{history}{$topic}) {
+        my @history = @{$self->{history}{$topic}};
+
+        # Take last N
+        if (@history > $history_count) {
+            @history = @history[-$history_count..-1];
+        }
+
+        for my $entry (@history) {
+            $self->_deliver_to_channel($channel, $entry->{message}, $now);
+        }
+    }
+
+    # Now do regular subscribe (with presence if provided)
+    await $self->subscribe($channel, $topic, %opts);
+
+    return 1;
+}
 
 1;
 
