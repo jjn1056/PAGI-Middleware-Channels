@@ -264,7 +264,36 @@ async sub flush {
     return 1;
 }
 
-async sub cleanup { return 1 }
+async sub cleanup {
+    my ($self, $channel) = @_;
+
+    # Remove from all groups and handle presence
+    for my $topic (keys %{$self->{groups}}) {
+        if (delete $self->{groups}{$topic}{$channel}) {
+            # Check if had presence
+            if ($self->{presence}{$topic} && $self->{presence}{$topic}{$channel}) {
+                my $presence_data = $self->{presence}{$topic}{$channel}{data};
+                delete $self->{presence}{$topic}{$channel};
+
+                # Broadcast leave event
+                await $self->_broadcast_presence_event($topic, 'presence.leave', $presence_data, $channel);
+            }
+        }
+    }
+
+    # Remove pattern subscriptions
+    delete $self->{patterns}{$channel};
+
+    # Clear message queue
+    delete $self->{queues}{$channel};
+
+    # Remove delayed messages for this channel
+    $self->{delayed} = [
+        grep { $_->{target} ne $channel } @{$self->{delayed}}
+    ];
+
+    return 1;
+}
 
 # Channel ID management (for presence tracking)
 sub set_channel_id {
