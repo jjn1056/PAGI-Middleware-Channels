@@ -21,7 +21,9 @@ sub init_loop {
     require IO::Async::Loop;
     require Future::IO::Impl::IOAsync;
     $loop = IO::Async::Loop->new;
-    Future::IO->override_impl(Future::IO::Impl::IOAsync->new(loop => $loop));
+    # Future::IO::Impl::IOAsync auto-configures on load,
+    # but we need to ensure the loop instance is shared
+    Future::IO::Impl::IOAsync->APPLY($loop);
     return $loop;
 }
 
