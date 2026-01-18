@@ -1,6 +1,12 @@
 #!/usr/bin/env perl
 # examples/chat-with-workers/worker.pl
 # Background worker for processing tasks
+#
+# This is a standalone worker process, not a PAGI app.
+# It creates its own event loop since it doesn't run under PAGI::Server.
+#
+# Usage:
+#   PAGI_CHANNELS_BACKEND=redis://localhost:6379 perl worker.pl
 
 use strict;
 use warnings;
@@ -12,6 +18,7 @@ use Future::IO;
 use lib 'lib';
 use PAGI::Channels;
 
+# Standalone worker - create our own event loop
 my $loop = IO::Async::Loop->new;
 Future::IO::Impl::IOAsync->APPLY($loop);
 

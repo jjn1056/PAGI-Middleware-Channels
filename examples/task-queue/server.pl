@@ -1,6 +1,13 @@
 #!/usr/bin/env perl
 # examples/task-queue/server.pl
 # Task queue with real-time progress updates
+#
+# This is a standalone CLI tool (worker/demo), not a PAGI app.
+# It creates its own event loop since it doesn't run under PAGI::Server.
+#
+# Usage:
+#   perl server.pl worker  - Run as background worker
+#   perl server.pl demo    - Submit task and watch progress
 
 use strict;
 use warnings;
@@ -13,6 +20,7 @@ use JSON::MaybeXS qw(encode_json decode_json);
 use lib 'lib';
 use PAGI::Channels;
 
+# Standalone tool - create our own event loop
 my $loop = IO::Async::Loop->new;
 Future::IO::Impl::IOAsync->APPLY($loop);
 

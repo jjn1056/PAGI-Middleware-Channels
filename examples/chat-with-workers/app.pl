@@ -1,22 +1,19 @@
 #!/usr/bin/env perl
 # examples/chat-with-workers/app.pl
 # Chat application with worker pool for background tasks
+#
+# Usage with PAGI::Server:
+#   PAGI_CHANNELS_BACKEND=redis://localhost:6379 pagi-server app.pl
+#
+# The server provides the event loop - this file just defines the app.
 
 use strict;
 use warnings;
 use Future::AsyncAwait;
-use IO::Async::Loop;
-use Future::IO::Impl::IOAsync;
 use JSON::MaybeXS qw(encode_json decode_json);
 
 use lib 'lib';
 use PAGI::Channels;
-
-# NOTE: This example uses IO::Async explicitly.
-# The main library (PAGI::Channels) uses Future::IO only.
-
-my $loop = IO::Async::Loop->new;
-Future::IO::Impl::IOAsync->APPLY($loop);
 
 my $channels = PAGI::Channels->new(
     backend => $ENV{PAGI_CHANNELS_BACKEND} // 'redis://localhost:6379',
@@ -108,6 +105,6 @@ my $chat_app = async sub {
 
 my $app = $channels->wrap($chat_app);
 
-print "Chat server ready. Connect with WebSocket to /chat/{room}?user={name}\n";
-print "Using backend: " . ($ENV{PAGI_CHANNELS_BACKEND} // 'redis://localhost:6379') . "\n";
-# In real usage: PAGI::Server->new(app => $app)->run;
+# Export the app for PAGI::Server
+# Run with: pagi-server examples/chat-with-workers/app.pl
+$app;
