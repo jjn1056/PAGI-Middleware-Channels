@@ -1,60 +1,55 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
-## Overview
+## Build & Test Commands
 
-PAGI-Channels provides cross-process and cross-server messaging for PAGI applications
-via a middleware wrapper pattern. It follows the ASGI ecosystem pattern where the
-server knows nothing about channel layers.
+```bash
+# Start Redis for tests
+cd t && docker compose up -d && cd ..
+
+# Run all tests
+REDIS_HOST=localhost prove -lr t/
+
+# Run memory backend tests (no Redis needed)
+prove -l t/10-memory/
+
+# Run Redis backend tests
+REDIS_HOST=localhost prove -l t/30-redis/
+
+# Run facade tests
+prove -l t/20-facade/
+```
 
 ## Architecture
 
-```
-PAGI::Channels (middleware wrapper)
-    └── Backend (pluggable)
-        ├── Memory (v1 - single process)
-        └── Redis (future - uses Async::Redis)
-```
+**CRITICAL: Loop Agnosticism**
+- `lib/` - Future::IO ONLY, no IO::Async/Mojo/etc.
+- `t/` - Uses IO::Async via Future::IO backend
+- `examples/` - Can use any loop (examples show IO::Async)
 
-## Key Concepts
+**Core Modules:**
+- `PAGI::Channels` - Facade and wrap() middleware
+- `PAGI::Channels::Backend` - Role defining backend interface
+- `PAGI::Channels::Backend::Memory` - In-memory (single process)
+- `PAGI::Channels::Backend::Redis` - Redis (multi-process)
 
-- **Channel**: Unique identifier for a connection (e.g., `conn.12345.1735689600.1`)
-- **Topic/Group**: Named channel for broadcast messaging
-- **wrap()**: Middleware that injects `pagi.channels` and `pagi.channel` into scope
-
-## Backend Interface
-
-Backends implement these methods via Role::Tiny:
-
-| Method | Purpose |
-|--------|---------|
-| `send($channel, $msg)` | Queue message for channel |
-| `poll($channel)` | Non-blocking check, returns msg or undef |
-| `subscribe($channel, $topic)` | Add channel to topic group |
-| `unsubscribe($channel, $topic)` | Remove channel from topic |
-| `publish($topic, $msg, %opts)` | Send to all topic subscribers |
-| `flush()` | Clear all state (testing) |
-| `cleanup($channel)` | Remove channel and all subscriptions |
-
-## Redis Backend (Future)
-
-Will use `Async::Redis` - an event-loop agnostic Redis client built on Future::IO:
-
-- Connection pooling via `Async::Redis::Pool` for high-throughput
-- Safe concurrent commands via Response Queue pattern
-- Pipeline support for batching
-
-## Design Documents
-
-- `docs/design/channel-layer.mkdn` - Full specification
+**Advanced Features (v1):**
+- Presence tracking (subscribe with presence option)
+- Pattern subscriptions (psubscribe with * and **)
+- Delayed messages (delay option on send/publish)
+- Message history (history option on subscribe)
 
 ## Dependencies
 
-### v1 (Memory backend)
-- Role::Tiny
-- Future::AsyncAwait
+Core: Future::AsyncAwait, Future::IO, Role::Tiny, JSON::MaybeXS
+Redis: Async::Redis
+Test: Test2::V0, IO::Async
 
-### Future (Redis backend)
-- Async::Redis
-- JSON (or Sereal for serialization)
+## Testing
+
+Tests are organized by backend:
+- `t/00-load.t` - Module loading
+- `t/10-memory/` - Memory backend (7 files)
+- `t/20-facade/` - Facade and wrap() (2 files)
+- `t/30-redis/` - Redis backend (6 files)

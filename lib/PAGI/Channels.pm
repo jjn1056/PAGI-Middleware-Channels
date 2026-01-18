@@ -186,16 +186,34 @@ PAGI::Channels - Cross-process messaging for PAGI applications
 
     use PAGI::Channels;
 
+    # Create channel layer (memory for dev, redis for production)
     my $channels = PAGI::Channels->new(
-        backend => 'memory://',  # or 'redis://localhost:6379'
+        backend => 'redis://localhost:6379',  # or 'memory://'
     );
 
+    # Wrap your PAGI app
     my $app = $channels->wrap(async sub {
         my ($scope, $receive, $send) = @_;
 
         my $ch = $scope->{'pagi.channels'};
-        await $ch->subscribe("chat.room1");
-        # ...
+        my $my_channel = $scope->{'pagi.channel'};
+
+        # Subscribe to a room with presence
+        await $ch->subscribe("chat.room1",
+            presence => { user => 'alice', status => 'online' }
+        );
+
+        # Pattern subscription
+        await $ch->psubscribe("notifications.**");
+
+        # Send with delay
+        await $ch->send($target, { type => 'reminder' }, delay => 300);
+
+        # Publish with history for new subscribers
+        await $ch->publish("chat.room1", { type => 'msg', text => 'hello' });
+
+        # List who's present
+        my @users = await $ch->list_presence("chat.room1");
     });
 
 =head1 DESCRIPTION
@@ -205,18 +223,202 @@ applications. It exceeds Django Channels with built-in:
 
 =over 4
 
-=item * Presence tracking (who's online)
+=item * B<Presence tracking> - Who's subscribed to a topic
 
-=item * Pattern subscriptions (chat.* matches chat.room1, chat.room2)
+=item * B<Pattern subscriptions> - C<chat.*> matches C<chat.room1>, C<chat.room2>
 
-=item * Delayed messages (send after N seconds)
+=item * B<Delayed messages> - Send after N seconds
 
-=item * Message history (new subscribers get last N messages)
+=item * B<Message history> - New subscribers get last N messages
 
 =back
 
-B<IMPORTANT:> This library is event-loop agnostic. All I/O uses Future::IO
-primitives. It works with IO::Async, Mojo::IOLoop, UV, or any Future::IO
-backend.
+=head2 LOOP AGNOSTICISM
+
+B<CRITICAL:> This library uses Future::IO only. It works with any event loop:
+
+    # IO::Async
+    use IO::Async::Loop;
+    use Future::IO::Impl::IOAsync;
+
+    # Mojo::IOLoop
+    use Future::IO::Impl::MojoIOLoop;
+
+    # UV
+    use Future::IO::Impl::UV;
+
+The main library code (C<lib/>) never imports loop-specific modules directly.
+
+=head1 METHODS
+
+=head2 new
+
+    my $channels = PAGI::Channels->new(
+        backend => 'redis://localhost:6379',  # or 'memory://'
+    );
+
+Create a new PAGI::Channels instance. The C<backend> option specifies the
+backend URI. Defaults to C<memory://> if not specified.
+
+You can also use the C<PAGI_CHANNELS_BACKEND> environment variable.
+
+=head2 wrap
+
+    my $app = $channels->wrap($inner_app);
+
+Wraps a PAGI application, injecting:
+
+=over 4
+
+=item * C<< $scope->{'pagi.channels'} >> - Channel interface
+
+=item * C<< $scope->{'pagi.channel'} >> - This connection's unique channel name
+
+=back
+
+The wrapped receive callable interleaves channel messages with protocol events.
+Channel messages are delivered first when available.
+
+Cleanup happens automatically when the inner app exits.
+
+=head2 backend
+
+    my $backend = $channels->backend;
+
+Returns the backend instance.
+
+=head1 CHANNEL INTERFACE
+
+Methods available on C<< $scope->{'pagi.channels'} >>:
+
+=head2 subscribe
+
+    await $ch->subscribe($topic);
+    await $ch->subscribe($topic, presence => { user => 'alice' });
+    await $ch->subscribe($topic, history => 10);
+
+Subscribe to a topic. Options:
+
+=over 4
+
+=item * C<presence> - Hash of presence data to track
+
+=item * C<history> - Number of recent messages to receive
+
+=back
+
+=head2 unsubscribe
+
+    await $ch->unsubscribe($topic);
+
+Unsubscribe from a topic. Broadcasts C<presence.leave> event if presence was tracked.
+
+=head2 psubscribe
+
+    await $ch->psubscribe("chat.*");       # Matches chat.room1
+    await $ch->psubscribe("events.**");    # Matches events.user.123
+
+Subscribe to topics matching a pattern.
+
+=over 4
+
+=item * C<*> matches exactly one segment (no dots)
+
+=item * C<**> matches zero or more segments
+
+=back
+
+=head2 punsubscribe
+
+    await $ch->punsubscribe("chat.*");
+    await $ch->punsubscribe();  # Remove all patterns
+
+Unsubscribe from pattern subscriptions.
+
+=head2 publish
+
+    await $ch->publish($topic, { type => 'msg', ... });
+    await $ch->publish($topic, $msg, exclude => $my_channel);
+    await $ch->publish($topic, $msg, delay => 60);
+
+Publish a message to all subscribers of a topic. Options:
+
+=over 4
+
+=item * C<exclude> - Channel or arrayref of channels to exclude
+
+=item * C<delay> - Delay delivery by N seconds
+
+=back
+
+=head2 send
+
+    await $ch->send($channel, { type => 'msg', ... });
+    await $ch->send($channel, $msg, delay => 300);
+
+Send a message directly to a specific channel. Options:
+
+=over 4
+
+=item * C<delay> - Delay delivery by N seconds
+
+=back
+
+=head2 list_presence
+
+    my @users = await $ch->list_presence($topic);
+
+Returns array of presence objects for a topic.
+
+=head2 track
+
+    await $ch->track($topic, { worker_id => $$, status => 'idle' });
+
+Explicitly track presence without subscribing. Useful for workers.
+
+=head2 untrack
+
+    await $ch->untrack($topic);
+
+Remove presence tracking.
+
+=head1 DJANGO CHANNELS COMPATIBILITY
+
+For familiarity, these aliases are provided:
+
+    group_add     => subscribe
+    group_discard => unsubscribe
+    group_send    => publish
+
+=head1 BACKENDS
+
+=head2 Memory (memory://)
+
+Single-process only. Good for development and testing.
+
+=head2 Redis (redis://host:port)
+
+Multi-process/multi-server. Uses L<Async::Redis>.
+
+=head1 ENVIRONMENT VARIABLES
+
+=over 4
+
+=item * C<PAGI_CHANNELS_BACKEND> - Default backend URI
+
+=back
+
+=head1 SEE ALSO
+
+L<Async::Redis>, L<Future::IO>, L<Future::AsyncAwait>
+
+=head1 AUTHOR
+
+John Googin Napiorkowski
+
+=head1 LICENSE
+
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.
 
 =cut
