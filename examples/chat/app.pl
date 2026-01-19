@@ -83,8 +83,13 @@ async sub handle_websocket {
 
     my $ch = $scope->{'pagi.channels'};
     my $my_channel = $scope->{'pagi.channel'};
-    my $room = $scope->{path_params}{room} // 'general';
-    my $username = $scope->{query_params}{user} // 'anonymous';
+
+    # Parse query string (PAGI provides query_string, not query_params for WebSocket)
+    my $qs = $scope->{query_string} // '';
+    my ($username) = $qs =~ /(?:^|&)user=([^&]*)/;
+    my ($room) = $qs =~ /(?:^|&)room=([^&]*)/;
+    $username = $username // 'anonymous';
+    $room = $room // 'general';
 
     await $send->({ type => 'websocket.accept' });
 
