@@ -6,7 +6,7 @@
 #   cd examples/chat
 #   PAGI_CHANNELS_BACKEND=redis://localhost:6379 pagi-server --workers 4 app.pl
 #
-# Then open http://localhost:8000 in your browser
+# Then open http://localhost:5000 in your browser
 
 use strict;
 use warnings;
@@ -17,65 +17,16 @@ use File::Spec;
 
 use lib 'lib';
 use PAGI::Channels;
+use PAGI::App::File;
 
 my $channels = PAGI::Channels->new(
     backend => $ENV{PAGI_CHANNELS_BACKEND} // 'redis://localhost:6379',
 );
 
-# Get the public directory path
-my $PUBLIC_DIR = File::Spec->catdir(dirname(__FILE__), 'public');
-
-# MIME types for static files
-my %MIME_TYPES = (
-    html => 'text/html; charset=utf-8',
-    css  => 'text/css; charset=utf-8',
-    js   => 'application/javascript; charset=utf-8',
-    json => 'application/json; charset=utf-8',
-    png  => 'image/png',
-    ico  => 'image/x-icon',
-);
-
-# Static file handler
-async sub serve_static {
-    my ($scope, $receive, $send, $path) = @_;
-
-    $path = '/index.html' if $path eq '/';
-    $path =~ s/\.\.//g;
-    $path =~ s|//+|/|g;
-
-    my $file_path = File::Spec->catfile($PUBLIC_DIR, $path);
-
-    unless (-f $file_path && -r $file_path) {
-        return await send_response($send, 404, 'text/plain', 'Not found');
-    }
-
-    my ($ext) = $file_path =~ /\.(\w+)$/;
-    my $content_type = $MIME_TYPES{lc($ext // '')} // 'application/octet-stream';
-
-    open my $fh, '<:raw', $file_path or return await send_response($send, 500, 'text/plain', 'Error');
-    local $/;
-    my $content = <$fh>;
-    close $fh;
-
-    await send_response($send, 200, $content_type, $content);
-}
-
-async sub send_response {
-    my ($send, $status, $content_type, $body) = @_;
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => $status,
-        headers => [
-            ['content-type', $content_type],
-            ['content-length', length($body)],
-        ],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => $body,
-    });
-}
+# Static file server for public/ directory
+my $static = PAGI::App::File->new(
+    root => File::Spec->catdir(dirname(__FILE__), 'public'),
+)->to_app;
 
 # WebSocket chat handler
 async sub handle_websocket {
@@ -166,7 +117,7 @@ my $app = $channels->wrap(async sub {
     }
 
     if ($type eq 'http') {
-        return await serve_static($scope, $receive, $send, $path);
+        return await $static->($scope, $receive, $send);
     }
 });
 
