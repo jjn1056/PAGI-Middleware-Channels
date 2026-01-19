@@ -57,7 +57,7 @@ sub wrap {
         # 3. Wrap receive to interleave channel messages
         my $wrapped_receive = async sub {
             # Check channel queue first (non-blocking)
-            if (my $msg = $self->{_backend}->poll($channel_name)) {
+            if (my $msg = await $self->{_backend}->poll($channel_name)) {
                 return $msg;
             }
             # Fall through to protocol receive

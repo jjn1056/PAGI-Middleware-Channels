@@ -173,6 +173,7 @@ async sub send {
 async sub poll {
     my ($self, $channel) = @_;
 
+    return undef unless $self->{_connected};
     my $key = $self->_queue_key($channel);
     my $json = await $self->{_redis}->lpop($key);
 
