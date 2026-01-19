@@ -2,6 +2,8 @@ package PAGI::Channels;
 use strict;
 use warnings;
 use Future::AsyncAwait;
+use Future;
+use Future::IO;
 
 our $VERSION = '0.001';
 
@@ -55,13 +57,29 @@ sub wrap {
         $scope->{'pagi.channel'} = $channel_name;
 
         # 3. Wrap receive to interleave channel messages
+        #    Poll channel queue periodically while waiting for protocol events
         my $wrapped_receive = async sub {
             # Check channel queue first (non-blocking)
             if (my $msg = await $self->{_backend}->poll($channel_name)) {
                 return $msg;
             }
-            # Fall through to protocol receive
-            return await $receive->();
+
+            # Start waiting for protocol event
+            my $protocol_f = $receive->();
+
+            # Poll channel queue while waiting, using select-style loop
+            while (!$protocol_f->is_ready) {
+                # Short sleep to avoid busy-waiting
+                await Future::IO->sleep(0.1);
+
+                # Check channel queue
+                if (my $msg = await $self->{_backend}->poll($channel_name)) {
+                    return $msg;
+                }
+            }
+
+            # Protocol event arrived
+            return $protocol_f->get;
         };
 
         # 4. Call inner app with error handling
