@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
+## Perl Environment
+
+**IMPORTANT:** Always use perlbrew before running Perl commands:
+
+```bash
+source ~/perl5/perlbrew/etc/bashrc && perlbrew use perl-5.40.0@default
+```
+
+This ensures you have the correct Perl with all dependencies (Future::AsyncAwait, etc.).
+
 ## Build & Test Commands
 
 ```bash
