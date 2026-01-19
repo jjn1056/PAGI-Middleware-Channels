@@ -15,7 +15,6 @@ use JSON::MaybeXS qw(encode_json decode_json);
 use File::Basename qw(dirname);
 use File::Spec;
 
-use lib 'lib';
 use PAGI::Channels;
 use PAGI::App::File;
 
