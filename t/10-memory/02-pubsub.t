@@ -19,8 +19,8 @@ subtest 'subscribe and publish' => sub {
     run { $backend->publish('room.general', { type => 'chat', text => 'hello' }) };
 
     # Both receive
-    my $msg1 = $backend->poll('ch1');
-    my $msg2 = $backend->poll('ch2');
+    my $msg1 = run { $backend->poll('ch1') };
+    my $msg2 = run { $backend->poll('ch2') };
 
     is($msg1->{text}, 'hello', 'ch1 received');
     is($msg2->{text}, 'hello', 'ch2 received');
@@ -36,9 +36,9 @@ subtest 'publish with exclude' => sub {
     # Publish excluding ch2
     run { $backend->publish('room', { type => 'msg' }, exclude => 'ch2') };
 
-    ok($backend->poll('ch1'), 'ch1 received');
-    is($backend->poll('ch2'), undef, 'ch2 excluded');
-    ok($backend->poll('ch3'), 'ch3 received');
+    ok(run { $backend->poll('ch1') }, 'ch1 received');
+    is(run { $backend->poll('ch2') }, undef, 'ch2 excluded');
+    ok(run { $backend->poll('ch3') }, 'ch3 received');
 };
 
 subtest 'publish to full channel drops silently' => sub {
@@ -54,8 +54,8 @@ subtest 'publish to full channel drops silently' => sub {
     is($ok, 1, 'publish succeeds even with full subscriber');
 
     # ch1 still only has original message
-    is($backend->poll('ch1')->{type}, 'fill', 'original message');
-    is($backend->poll('ch1'), undef, 'broadcast was dropped');
+    is(run { $backend->poll('ch1') }->{type}, 'fill', 'original message');
+    is(run { $backend->poll('ch1') }, undef, 'broadcast was dropped');
 };
 
 subtest 'unsubscribe' => sub {
@@ -65,7 +65,7 @@ subtest 'unsubscribe' => sub {
     run { $backend->unsubscribe('ch1', 'room') };
     run { $backend->publish('room', { type => 'msg' }) };
 
-    is($backend->poll('ch1'), undef, 'unsubscribed channel does not receive');
+    is(run { $backend->poll('ch1') }, undef, 'unsubscribed channel does not receive');
 };
 
 subtest 'subscribe is idempotent' => sub {
@@ -75,8 +75,8 @@ subtest 'subscribe is idempotent' => sub {
     run { $backend->subscribe('ch1', 'room') };  # duplicate
     run { $backend->publish('room', { type => 'msg' }) };
 
-    ok($backend->poll('ch1'), 'received once');
-    is($backend->poll('ch1'), undef, 'no duplicate');
+    ok(run { $backend->poll('ch1') }, 'received once');
+    is(run { $backend->poll('ch1') }, undef, 'no duplicate');
 };
 
 done_testing;

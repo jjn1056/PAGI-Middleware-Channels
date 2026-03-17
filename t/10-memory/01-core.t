@@ -12,18 +12,18 @@ subtest 'send and poll' => sub {
     my $backend = PAGI::Channels::Backend::Memory->new();
 
     # Initially empty
-    my $msg = $backend->poll('test.channel');
+    my $msg = run { $backend->poll('test.channel') };
     is($msg, undef, 'poll on empty channel returns undef');
 
     # Send message
     run { $backend->send('test.channel', { type => 'test', data => 1 }) };
 
     # Poll receives it
-    $msg = $backend->poll('test.channel');
+    $msg = run { $backend->poll('test.channel') };
     is($msg, { type => 'test', data => 1 }, 'poll returns sent message');
 
     # Now empty again
-    $msg = $backend->poll('test.channel');
+    $msg = run { $backend->poll('test.channel') };
     is($msg, undef, 'poll after consume returns undef');
 };
 
@@ -34,10 +34,10 @@ subtest 'FIFO ordering' => sub {
     run { $backend->send('ch', { type => 'msg', n => 2 }) };
     run { $backend->send('ch', { type => 'msg', n => 3 }) };
 
-    is($backend->poll('ch')->{n}, 1, 'first message');
-    is($backend->poll('ch')->{n}, 2, 'second message');
-    is($backend->poll('ch')->{n}, 3, 'third message');
-    is($backend->poll('ch'), undef, 'queue empty');
+    is(run { $backend->poll('ch') }->{n}, 1, 'first message');
+    is(run { $backend->poll('ch') }->{n}, 2, 'second message');
+    is(run { $backend->poll('ch') }->{n}, 3, 'third message');
+    is(run { $backend->poll('ch') }, undef, 'queue empty');
 };
 
 subtest 'capacity limit' => sub {

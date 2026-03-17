@@ -22,7 +22,7 @@ subtest 'cleanup removes channel from all groups' => sub {
     run { $backend->publish('room2', { type => 'msg' }) };
     run { $backend->publish('room3', { type => 'msg' }) };
 
-    is($backend->poll('ch1'), undef, 'ch1 removed from all groups');
+    is(run { $backend->poll('ch1') }, undef, 'ch1 removed from all groups');
 };
 
 subtest 'cleanup removes pending messages' => sub {
@@ -33,7 +33,7 @@ subtest 'cleanup removes pending messages' => sub {
 
     run { $backend->cleanup('ch1') };
 
-    is($backend->poll('ch1'), undef, 'queue cleared');
+    is(run { $backend->poll('ch1') }, undef, 'queue cleared');
 };
 
 subtest 'cleanup removes pattern subscriptions' => sub {
@@ -43,7 +43,7 @@ subtest 'cleanup removes pattern subscriptions' => sub {
     run { $backend->cleanup('ch1') };
     run { $backend->publish('events.click', { type => 'msg' }) };
 
-    is($backend->poll('ch1'), undef, 'pattern subscription removed');
+    is(run { $backend->poll('ch1') }, undef, 'pattern subscription removed');
 };
 
 subtest 'cleanup removes presence and broadcasts leave' => sub {
@@ -58,13 +58,13 @@ subtest 'cleanup removes presence and broadcasts leave' => sub {
     run { $backend->subscribe('ch1', 'room', presence => { user => 'alice' }) };
 
     # Consume join event
-    $backend->poll('ch2');
+    run { $backend->poll('ch2') };
 
     # Cleanup ch1
     run { $backend->cleanup('ch1') };
 
     # ch2 should get leave event
-    my $event = $backend->poll('ch2');
+    my $event = run { $backend->poll('ch2') };
     is($event->{type}, 'presence.leave', 'leave event sent');
     is($event->{presence}{user}, 'alice', 'correct user');
 
@@ -84,7 +84,7 @@ subtest 'flush clears everything' => sub {
 
     run { $backend->flush() };
 
-    is($backend->poll('ch1'), undef, 'queues cleared');
+    is(run { $backend->poll('ch1') }, undef, 'queues cleared');
     is(scalar keys %{$backend->{groups}}, 0, 'groups cleared');
     is(scalar keys %{$backend->{patterns}}, 0, 'patterns cleared');
     is(scalar keys %{$backend->{presence}}, 0, 'presence cleared');

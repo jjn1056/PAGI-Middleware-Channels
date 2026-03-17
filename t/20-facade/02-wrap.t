@@ -98,7 +98,7 @@ subtest 'cleanup on app exit' => sub {
     # Publish to room - cleaned up channel should not receive
     run { $channels->backend->publish('room', { type => 'msg' }) };
 
-    is($channels->backend->poll($my_channel), undef, 'channel cleaned up');
+    is(run { $channels->backend->poll($my_channel) }, undef, 'channel cleaned up');
 };
 
 done_testing;

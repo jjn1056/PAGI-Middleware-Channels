@@ -15,11 +15,11 @@ subtest 'send_delayed delivers after delay' => sub {
     run { $backend->send_delayed('ch1', { type => 'delayed' }, 0.1) };
 
     # Not delivered immediately
-    is($backend->poll('ch1'), undef, 'not delivered immediately');
+    is(run { $backend->poll('ch1') }, undef, 'not delivered immediately');
 
     # Process delayed messages
     run { $backend->process_delayed() };
-    is($backend->poll('ch1'), undef, 'still not delivered');
+    is(run { $backend->poll('ch1') }, undef, 'still not delivered');
 
     # Wait and process again
     run {
@@ -28,7 +28,7 @@ subtest 'send_delayed delivers after delay' => sub {
     };
     run { $backend->process_delayed() };
 
-    my $msg = $backend->poll('ch1');
+    my $msg = run { $backend->poll('ch1') };
     is($msg->{type}, 'delayed', 'delivered after delay');
 };
 
@@ -41,8 +41,8 @@ subtest 'publish_delayed delivers to all subscribers after delay' => sub {
     run { $backend->publish_delayed('room', { type => 'broadcast' }, 0.1) };
 
     # Not delivered immediately
-    is($backend->poll('ch1'), undef, 'ch1 not delivered yet');
-    is($backend->poll('ch2'), undef, 'ch2 not delivered yet');
+    is(run { $backend->poll('ch1') }, undef, 'ch1 not delivered yet');
+    is(run { $backend->poll('ch2') }, undef, 'ch2 not delivered yet');
 
     # Wait and process
     run {
@@ -51,8 +51,8 @@ subtest 'publish_delayed delivers to all subscribers after delay' => sub {
     };
     run { $backend->process_delayed() };
 
-    is($backend->poll('ch1')->{type}, 'broadcast', 'ch1 received');
-    is($backend->poll('ch2')->{type}, 'broadcast', 'ch2 received');
+    is(run { $backend->poll('ch1') }->{type}, 'broadcast', 'ch1 received');
+    is(run { $backend->poll('ch2') }->{type}, 'broadcast', 'ch2 received');
 };
 
 subtest 'multiple delayed messages in order' => sub {
@@ -70,9 +70,9 @@ subtest 'multiple delayed messages in order' => sub {
     run { $backend->process_delayed() };
 
     # Should arrive in delay order: 1, 3, 2
-    is($backend->poll('ch')->{n}, 1, 'first (0.05s)');
-    is($backend->poll('ch')->{n}, 3, 'second (0.10s)');
-    is($backend->poll('ch')->{n}, 2, 'third (0.15s)');
+    is(run { $backend->poll('ch') }->{n}, 1, 'first (0.05s)');
+    is(run { $backend->poll('ch') }->{n}, 3, 'second (0.10s)');
+    is(run { $backend->poll('ch') }->{n}, 2, 'third (0.15s)');
 };
 
 done_testing;

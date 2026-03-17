@@ -23,8 +23,8 @@ subtest 'basic send/subscribe/publish flow' => sub {
 
     run { $channels->backend->publish('room', { type => 'msg', text => 'hello' }) };
 
-    my $msg1 = $channels->backend->poll('ch1');
-    my $msg2 = $channels->backend->poll('ch2');
+    my $msg1 = run { $channels->backend->poll('ch1') };
+    my $msg2 = run { $channels->backend->poll('ch2') };
 
     is($msg1->{text}, 'hello', 'ch1 received');
     is($msg2->{text}, 'hello', 'ch2 received');

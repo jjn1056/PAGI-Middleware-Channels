@@ -50,14 +50,14 @@ subtest 'presence events on join/leave' => sub {
     run { $backend->subscribe('ch2', 'room', presence => { user => 'ch2' }) };
 
     # Check ch1 received join event
-    my $event = $backend->poll('ch1');
+    my $event = run { $backend->poll('ch1') };
     is($event->{type}, 'presence.join', 'presence.join event');
     is($event->{presence}{user}, 'ch2', 'correct joiner');
 
     # ch2 leaves - ch1 should get presence.leave event
     run { $backend->unsubscribe('ch2', 'room') };
 
-    $event = $backend->poll('ch1');
+    $event = run { $backend->poll('ch1') };
     is($event->{type}, 'presence.leave', 'presence.leave event');
     is($event->{presence}{user}, 'ch2', 'correct leaver');
 };
