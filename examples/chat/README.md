@@ -19,8 +19,11 @@ cd t && docker compose up -d
 **Terminal 2: Start the app**
 ```bash
 cd examples/chat
-PAGI_CHANNELS_BACKEND=redis://localhost:6379 pagi-server --workers 4 app.pl
+pagi-server --workers 4 app.pl
 ```
+
+Override the Redis URI with `PAGI_REDIS_URI=redis://host:port` if your
+Redis isn't on `localhost:6379`.
 
 **Browser: Open the chat**
 - Open http://localhost:8000

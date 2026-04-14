@@ -16,12 +16,22 @@ use File::Basename qw(dirname);
 use File::Spec;
 
 use PAGI::Channels;
+use PAGI::Channels::Backend::Redis;
 use PAGI::WebSocket;
 use PAGI::App::Router;
 use PAGI::App::File;
+use Async::Redis;
+
+my $redis = Async::Redis->new(
+    uri       => $ENV{PAGI_REDIS_URI} // 'redis://localhost:6379',
+    prefix    => 'chat:',
+    reconnect => 1,
+);
+# Connection happens in the lifespan.startup hook below,
+# so the loop is running when we wait for it.
 
 my $channels = PAGI::Channels->new(
-    backend => $ENV{PAGI_CHANNELS_BACKEND} // 'redis://localhost:6379',
+    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
 );
 
 # WebSocket chat handler
@@ -108,6 +118,7 @@ my $app = async sub {
     if ($scope->{type} eq 'lifespan') {
         while (my $event = await $receive->()) {
             if ($event->{type} eq 'lifespan.startup') {
+                await $redis->connect;
                 await $channels->backend->flush;
                 await $send->({ type => 'lifespan.startup.complete' });
             }
