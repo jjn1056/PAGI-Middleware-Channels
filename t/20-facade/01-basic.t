@@ -7,16 +7,20 @@ use Test2::V0;
 my $loop = init_loop();
 
 use PAGI::Channels;
+use PAGI::Channels::Backend::Memory;
+
+subtest 'new() requires a backend instance' => sub {
+    like(
+        dies { PAGI::Channels->new() },
+        qr/backend/,
+        'dies without backend arg',
+    );
+};
 
 subtest 'basic send/subscribe/publish flow' => sub {
-    my $channels = PAGI::Channels->new();
-
-    # Simulate two connections
-    my $scope1 = {};
-    my $scope2 = {};
-
-    # Wrap creates channel names and injects scope keys
-    # For now test backend directly via facade methods
+    my $channels = PAGI::Channels->new(
+        backend => PAGI::Channels::Backend::Memory->new,
+    );
 
     run { $channels->backend->subscribe('ch1', 'room') };
     run { $channels->backend->subscribe('ch2', 'room') };
@@ -30,15 +34,10 @@ subtest 'basic send/subscribe/publish flow' => sub {
     is($msg2->{text}, 'hello', 'ch2 received');
 };
 
-subtest 'default memory backend' => sub {
-    my $channels = PAGI::Channels->new();
-    isa_ok($channels->backend, 'PAGI::Channels::Backend::Memory');
-};
-
-subtest 'env var backend selection' => sub {
-    local $ENV{PAGI_CHANNELS_BACKEND} = 'memory://';
-    my $channels = PAGI::Channels->new();
-    isa_ok($channels->backend, 'PAGI::Channels::Backend::Memory');
+subtest 'backend accessor returns the passed instance' => sub {
+    my $memory = PAGI::Channels::Backend::Memory->new;
+    my $channels = PAGI::Channels->new(backend => $memory);
+    is($channels->backend, $memory, 'backend accessor returns exact instance');
 };
 
 done_testing;

@@ -8,10 +8,13 @@ use Test2::V0;
 my $loop = init_loop();
 
 use PAGI::Channels;
+use PAGI::Channels::Backend::Memory;
 use Future::AsyncAwait;
 
 subtest 'wrap injects scope keys' => sub {
-    my $channels = PAGI::Channels->new();
+    my $channels = PAGI::Channels->new(
+        backend => PAGI::Channels::Backend::Memory->new,
+    );
 
     my $captured_scope;
     my $inner_app = async sub {
@@ -34,7 +37,9 @@ subtest 'wrap injects scope keys' => sub {
 };
 
 subtest 'wrapped receive interleaves channel messages' => sub {
-    my $channels = PAGI::Channels->new();
+    my $channels = PAGI::Channels->new(
+        backend => PAGI::Channels::Backend::Memory->new,
+    );
 
     my @received;
     my $inner_app = async sub {
@@ -74,7 +79,9 @@ subtest 'wrapped receive interleaves channel messages' => sub {
 };
 
 subtest 'cleanup on app exit' => sub {
-    my $channels = PAGI::Channels->new();
+    my $channels = PAGI::Channels->new(
+        backend => PAGI::Channels::Backend::Memory->new,
+    );
 
     my $my_channel;
     my $inner_app = async sub {

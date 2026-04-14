@@ -10,35 +10,14 @@ our $VERSION = '0.001';
 sub new {
     my ($class, %args) = @_;
 
-    my $backend_uri = $args{backend}
-        // $ENV{PAGI_CHANNELS_BACKEND}
-        // 'memory://';
+    my $backend = $args{backend}
+        or die "PAGI::Channels: 'backend' argument required "
+             . "(a PAGI::Channels::Backend instance)";
 
-    my $self = bless {
-        backend_uri => $backend_uri,
-        _backend    => undef,
-        _counter    => 0,
+    return bless {
+        _backend => $backend,
+        _counter => 0,
     }, $class;
-
-    $self->_init_backend($backend_uri);
-
-    return $self;
-}
-
-sub _init_backend {
-    my ($self, $uri) = @_;
-
-    if ($uri =~ /^memory:/) {
-        require PAGI::Channels::Backend::Memory;
-        $self->{_backend} = PAGI::Channels::Backend::Memory->new();
-    }
-    elsif ($uri =~ /^redis:/) {
-        require PAGI::Channels::Backend::Redis;
-        $self->{_backend} = PAGI::Channels::Backend::Redis->new(uri => $uri);
-    }
-    else {
-        die "Unknown backend: $uri";
-    }
 }
 
 sub backend { shift->{_backend} }
