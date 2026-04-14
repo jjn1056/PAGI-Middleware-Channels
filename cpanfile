@@ -18,6 +18,6 @@ on 'test' => sub {
     requires 'Test2::V0';
     requires 'Test::Lib';
     requires 'IO::Async', '0.802';
-    requires 'Future::IO::Impl::IOAsync';
+    requires 'Future::IO::Impl::IOAsync', '0.805';
     requires 'Devel::Cover';
 };

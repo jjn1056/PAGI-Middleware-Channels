@@ -75,4 +75,23 @@ subtest 'multiple delayed messages in order' => sub {
     is(run { $backend->poll('ch') }->{n}, 2, 'third (0.15s)');
 };
 
+subtest 'poll() delivers due delayed messages without manual pump' => sub {
+    my $backend = PAGI::Channels::Backend::Memory->new();
+
+    run { $backend->send_delayed('ch1', { type => 'reminder' }, 0.05) };
+
+    # Nothing before the delay elapses
+    is(run { $backend->poll('ch1') }, undef, 'not delivered before delay');
+
+    # Wait past the delay
+    run {
+        my $timer = Future::IO->sleep(0.1);
+        await $timer;
+    };
+
+    # poll() itself should pump the delayed queue — no manual process_delayed
+    my $msg = run { $backend->poll('ch1') };
+    is($msg->{type}, 'reminder', 'delayed message pumped by poll()');
+};
+
 done_testing;

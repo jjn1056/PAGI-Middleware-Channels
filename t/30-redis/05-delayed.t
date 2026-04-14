@@ -114,6 +114,27 @@ SKIP: {
 
         run { $backend->disconnect() };
     };
+
+    subtest 'poll() delivers due delayed messages without manual pump' => sub {
+        my $backend = $make_backend->();
+
+        run { $backend->send_delayed('ch1', { type => 'reminder' }, 0.05) };
+
+        # Nothing before the delay elapses
+        is(run { $backend->poll('ch1') }, undef, 'not delivered before delay');
+
+        # Wait past the delay
+        run {
+            my $timer = Future::IO->sleep(0.1);
+            await $timer;
+        };
+
+        # poll() itself should pump the delayed queue — no manual process_delayed
+        my $msg = run { $backend->poll('ch1') };
+        is($msg->{type}, 'reminder', 'delayed message pumped by poll()');
+
+        run { $backend->disconnect() };
+    };
 }
 
 done_testing;

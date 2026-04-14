@@ -69,6 +69,9 @@ async sub send {
 async sub poll {
     my ($self, $channel) = @_;
 
+    # Drain any due delayed messages into their target queues first
+    await $self->process_delayed if @{$self->{delayed}};
+
     my $queue = $self->{queues}{$channel} or return undef;
 
     # Remove expired messages

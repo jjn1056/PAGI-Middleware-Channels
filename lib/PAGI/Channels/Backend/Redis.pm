@@ -174,6 +174,10 @@ async sub poll {
     my ($self, $channel) = @_;
 
     return undef unless $self->{_connected};
+
+    # Drain any due delayed messages into their target queues first
+    await $self->process_delayed;
+
     my $key = $self->_queue_key($channel);
     my $json = await $self->{_redis}->lpop($key);
 
