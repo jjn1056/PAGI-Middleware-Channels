@@ -43,7 +43,7 @@ function connect() {
     currentRoom.textContent = '#' + room;
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${location.host}/ws/chat?user=${encodeURIComponent(username)}&room=${encodeURIComponent(room)}`;
+    const url = `${protocol}//${location.host}/ws/chat/${encodeURIComponent(room)}?user=${encodeURIComponent(username)}`;
 
     ws = new WebSocket(url);
 

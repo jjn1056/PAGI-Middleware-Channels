@@ -67,3 +67,7 @@ Browser 2 ──┼─────>│   Redis     │<─────┼── 
 ```
 
 Each worker is a separate process. PAGI-Channels routes messages between them via Redis.
+
+## Clean stale sessions
+
+redis-cli FLUSHDB 

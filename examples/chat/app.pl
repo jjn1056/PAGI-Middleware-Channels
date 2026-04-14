@@ -4,44 +4,39 @@
 #
 # Usage:
 #   cd examples/chat
-#   PAGI_CHANNELS_BACKEND=redis://localhost:6379 pagi-server --workers 4 app.pl
+#   pagi-server --workers 4 app.pl
 #
 # Then open http://localhost:5000 in your browser
 
 use strict;
 use warnings;
 use Future::AsyncAwait;
-use JSON::MaybeXS qw(encode_json decode_json);
+use JSON::MaybeXS qw(decode_json);
 use File::Basename qw(dirname);
 use File::Spec;
 
 use PAGI::Channels;
+use PAGI::WebSocket;
+use PAGI::App::Router;
 use PAGI::App::File;
 
 my $channels = PAGI::Channels->new(
     backend => $ENV{PAGI_CHANNELS_BACKEND} // 'redis://localhost:6379',
 );
 
-# Static file server for public/ directory
-my $static = PAGI::App::File->new(
-    root => File::Spec->catdir(dirname(__FILE__), 'public'),
-)->to_app;
-
 # WebSocket chat handler
 async sub handle_websocket {
     my ($scope, $receive, $send) = @_;
 
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
     my $ch = $scope->{'pagi.channels'};
     my $my_channel = $scope->{'pagi.channel'};
 
-    # Parse query string (PAGI provides query_string, not query_params for WebSocket)
-    my $qs = $scope->{query_string} // '';
-    my ($username) = $qs =~ /(?:^|&)user=([^&]*)/;
-    my ($room) = $qs =~ /(?:^|&)room=([^&]*)/;
-    $username = $username // 'anonymous';
-    $room = $room // 'general';
+    # Room from path param, username from query string
+    my $room = $ws->path_param('room') // 'general';
+    my $username = $ws->query('user') // 'anonymous';
 
-    await $send->({ type => 'websocket.accept' });
+    await $ws->accept;
 
     # Subscribe to room with presence tracking
     await $ch->subscribe("chat.$room",
@@ -50,17 +45,14 @@ async sub handle_websocket {
 
     # Send current users to the new user
     my @users = await $ch->list_presence("chat.$room");
-    await $send->({
-        type => 'websocket.send',
-        text => encode_json({
-            type  => 'users',
-            users => \@users,
-            room  => $room,
-        }),
+    await $ws->send_json({
+        type  => 'users',
+        users => \@users,
+        room  => $room,
     });
 
-    while (1) {
-        my $event = await $receive->();
+    # Main event loop - handle both WebSocket and channel events
+    while (my $event = await $receive->()) {
         my $type = $event->{type} // '';
 
         if ($type eq 'websocket.receive') {
@@ -75,28 +67,18 @@ async sub handle_websocket {
             }, exclude => $my_channel);
         }
         elsif ($type eq 'chat.message') {
-            # Forward channel message to WebSocket
-            await $send->({
-                type => 'websocket.send',
-                text => encode_json($event),
-            });
+            await $ws->send_json($event);
         }
         elsif ($type eq 'presence.join') {
-            await $send->({
-                type => 'websocket.send',
-                text => encode_json({
-                    type => 'user_joined',
-                    user => $event->{presence}{user},
-                }),
+            await $ws->send_json({
+                type => 'user_joined',
+                user => $event->{presence}{user},
             });
         }
         elsif ($type eq 'presence.leave') {
-            await $send->({
-                type => 'websocket.send',
-                text => encode_json({
-                    type => 'user_left',
-                    user => $event->{presence}{user},
-                }),
+            await $ws->send_json({
+                type => 'user_left',
+                user => $event->{presence}{user},
             });
         }
         elsif ($type eq 'websocket.disconnect') {
@@ -105,19 +87,39 @@ async sub handle_websocket {
     }
 }
 
-# Main app - wrap with channels
-my $app = $channels->wrap(async sub {
+# Build router
+my $router = PAGI::App::Router->new;
+
+# WebSocket route with room as path parameter
+$router->websocket('/ws/chat/:room' => \&handle_websocket);
+
+# Static files fallback
+$router->mount('/' => PAGI::App::File->new(
+    root => File::Spec->catdir(dirname(__FILE__), 'public'),
+)->to_app);
+
+# Wrap with channels
+my $channels_app = $channels->wrap($router->to_app);
+
+# Lifespan-aware wrapper - clears stale presence on startup
+my $app = async sub {
     my ($scope, $receive, $send) = @_;
-    my $type = $scope->{type} // '';
-    my $path = $scope->{path} // '/';
 
-    if ($type eq 'websocket' && $path =~ m{^/ws/chat(?:/|$)}) {
-        return await handle_websocket($scope, $receive, $send);
+    if ($scope->{type} eq 'lifespan') {
+        while (my $event = await $receive->()) {
+            if ($event->{type} eq 'lifespan.startup') {
+                await $channels->backend->flush;
+                await $send->({ type => 'lifespan.startup.complete' });
+            }
+            elsif ($event->{type} eq 'lifespan.shutdown') {
+                await $send->({ type => 'lifespan.shutdown.complete' });
+                last;
+            }
+        }
+        return;
     }
 
-    if ($type eq 'http') {
-        return await $static->($scope, $receive, $send);
-    }
-});
+    await $channels_app->($scope, $receive, $send);
+};
 
 $app;
