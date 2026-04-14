@@ -323,6 +323,8 @@ async sub publish {
 async sub flush {
     my ($self) = @_;
 
+    await $self->_ensure_connected();
+
     # Delete all keys with our prefix
     my $keys_ref = await $self->{_redis}->keys($self->{prefix} . '*');
     my @keys = ref $keys_ref eq 'ARRAY' ? @$keys_ref : ();
