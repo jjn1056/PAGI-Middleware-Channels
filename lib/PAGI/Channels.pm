@@ -175,6 +175,8 @@ package PAGI::Channels;
 
 __END__
 
+=encoding utf-8
+
 =head1 NAME
 
 PAGI::Channels - Cross-process messaging for PAGI applications
@@ -182,10 +184,26 @@ PAGI::Channels - Cross-process messaging for PAGI applications
 =head1 SYNOPSIS
 
     use PAGI::Channels;
+    use PAGI::Channels::Backend::Memory;
 
-    # Create channel layer (memory for dev, redis for production)
+    # Dev: in-memory backend
     my $channels = PAGI::Channels->new(
-        backend => 'redis://localhost:6379',  # or 'memory://'
+        backend => PAGI::Channels::Backend::Memory->new,
+    );
+
+    # Prod: Redis-backed, with a caller-owned Async::Redis client
+    use Async::Redis;
+    use PAGI::Channels::Backend::Redis;
+
+    my $redis = Async::Redis->new(
+        uri       => 'redis://localhost:6379',
+        prefix    => 'myapp:channels:',
+        reconnect => 1,
+    );
+    $redis->connect->get;
+
+    my $channels = PAGI::Channels->new(
+        backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
     );
 
     # Wrap your PAGI app
@@ -251,13 +269,17 @@ The main library code (C<lib/>) never imports loop-specific modules directly.
 =head2 new
 
     my $channels = PAGI::Channels->new(
-        backend => 'redis://localhost:6379',  # or 'memory://'
+        backend => $backend_instance,
     );
 
-Create a new PAGI::Channels instance. The C<backend> option specifies the
-backend URI. Defaults to C<memory://> if not specified.
+Create a new C<PAGI::Channels> instance. The C<backend> argument is
+B<required> and must be a L<PAGI::Channels::Backend> instance (e.g.,
+L<PAGI::Channels::Backend::Memory> or L<PAGI::Channels::Backend::Redis>).
 
-You can also use the C<PAGI_CHANNELS_BACKEND> environment variable.
+The facade does no backend construction of its own — callers wire up
+the backend (and, for Redis, the underlying L<Async::Redis> client)
+explicitly. This keeps dependencies honest: L<PAGI::Channels> has no
+runtime dependency on any Redis client.
 
 =head2 wrap
 
@@ -389,21 +411,15 @@ For familiarity, these aliases are provided:
 
 =head1 BACKENDS
 
-=head2 Memory (memory://)
+=head2 L<PAGI::Channels::Backend::Memory>
 
-Single-process only. Good for development and testing.
+Single-process, in-memory. Good for development and testing.
 
-=head2 Redis (redis://host:port)
+=head2 L<PAGI::Channels::Backend::Redis>
 
-Multi-process/multi-server. Uses L<Async::Redis>.
-
-=head1 ENVIRONMENT VARIABLES
-
-=over 4
-
-=item * C<PAGI_CHANNELS_BACKEND> - Default backend URI
-
-=back
+Multi-process, multi-server. Takes a caller-owned L<Async::Redis>
+instance; L<PAGI::Channels> itself has no runtime dependency on any
+Redis client — any object that ducks the Async::Redis interface works.
 
 =head1 SEE ALSO
 

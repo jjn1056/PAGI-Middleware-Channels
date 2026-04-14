@@ -475,45 +475,58 @@ async sub subscribe_with_history {
 
 __END__
 
+=encoding utf-8
+
 =head1 NAME
 
 PAGI::Channels::Backend::Redis - Redis-backed channel backend for multi-process use
 
 =head1 SYNOPSIS
 
+    use Async::Redis;
     use PAGI::Channels::Backend::Redis;
 
+    my $redis = Async::Redis->new(
+        uri       => 'redis://localhost:6379',
+        prefix    => 'myapp:channels:',
+        reconnect => 1,
+    );
+    $redis->connect->get;
+
     my $backend = PAGI::Channels::Backend::Redis->new(
-        uri      => 'redis://localhost:6379',
-        prefix   => 'myapp:',
+        redis    => $redis,
         capacity => 100,
     );
 
-    await $backend->connect();
-
-    # Send a message
     await $backend->send('my.channel', { type => 'greeting', msg => 'hello' });
-
-    # Poll for messages
     my $msg = await $backend->poll('my.channel');
 
 =head1 DESCRIPTION
 
-This backend stores all messages in Redis and is suitable for multi-process
-and multi-server applications. Messages are stored in Redis lists with
-configurable capacity limits and expiration.
+Redis-backed channel backend for multi-process and multi-server use.
+
+The backend takes a configured L<Async::Redis> instance (or any
+object with a compatible interface) and uses it for all Redis
+operations. Connection lifecycle, reconnect, prefix, and fork-safety
+are the responsibility of the passed-in client, not the backend.
+
+Structural keys used in Redis (relative to the client's prefix):
+
+    q:<channel>     — channel message queue (LIST)
+    g:<topic>       — subscription group membership (SET)
+    p:<topic>       — presence data (HASH)
+    h:<topic>       — history buffer (LIST)
+    pat:<channel>   — pattern subscriptions for a channel (SET)
+    delayed         — delayed-delivery queue (ZSET)
 
 =head1 CONSTRUCTOR OPTIONS
 
 =over 4
 
-=item uri => $redis_uri
+=item redis => $async_redis
 
-Redis connection URI. Default: 'redis://localhost:6379'
-
-=item prefix => $string
-
-Key prefix for all Redis keys. Default: 'pagi:'
+B<Required.> An L<Async::Redis> instance (or anything that ducks the
+same interface). The caller owns the connection lifecycle.
 
 =item capacity => $int
 
@@ -536,5 +549,12 @@ Maximum size of serialized message. Default: 1048576 (1MB).
 Number of messages to retain for history feature. Default: 0 (disabled).
 
 =back
+
+=head1 NOTES ON FLUSH
+
+C<flush()> deletes B<every> key matching the Redis client's prefix,
+not only the structural keys this backend writes. Use a dedicated
+prefix on your L<Async::Redis> instance if you want isolation from
+other code sharing the same Redis.
 
 =cut

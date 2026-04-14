@@ -20,9 +20,18 @@ cpanm PAGI::Channels
 
 ```perl
 use PAGI::Channels;
+use PAGI::Channels::Backend::Redis;
+use Async::Redis;
+
+my $redis = Async::Redis->new(
+    uri       => 'redis://localhost:6379',
+    prefix    => 'myapp:channels:',
+    reconnect => 1,
+);
+$redis->connect->get;
 
 my $channels = PAGI::Channels->new(
-    backend => 'redis://localhost:6379',
+    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
 );
 
 my $app = $channels->wrap(async sub {
@@ -43,20 +52,36 @@ my $app = $channels->wrap(async sub {
 
 ## Backends
 
-### Memory (`memory://`)
+### Memory — `PAGI::Channels::Backend::Memory`
 
 Single-process, in-memory. Perfect for development and testing.
 
 ```perl
-my $channels = PAGI::Channels->new(backend => 'memory://');
+use PAGI::Channels::Backend::Memory;
+
+my $channels = PAGI::Channels->new(
+    backend => PAGI::Channels::Backend::Memory->new,
+);
 ```
 
-### Redis (`redis://host:port`)
+### Redis — `PAGI::Channels::Backend::Redis`
 
-Multi-process, multi-server. Requires Redis and [Async::Redis](https://metacpan.org/pod/Async::Redis).
+Multi-process, multi-server. Takes any client ducking the [Async::Redis](https://metacpan.org/pod/Async::Redis) interface; bring your own client and hand it to the backend. PAGI-Channels itself has no runtime dependency on a Redis client.
 
 ```perl
-my $channels = PAGI::Channels->new(backend => 'redis://localhost:6379');
+use PAGI::Channels::Backend::Redis;
+use Async::Redis;
+
+my $redis = Async::Redis->new(
+    uri       => 'redis://localhost:6379',
+    prefix    => 'myapp:channels:',
+    reconnect => 1,
+);
+$redis->connect->get;
+
+my $channels = PAGI::Channels->new(
+    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
+);
 ```
 
 ## Examples
