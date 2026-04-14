@@ -1,611 +1,336 @@
-# Redis Backend: Accept Async::Redis Instance
+# Redis Backend & Facade — Pure-Instance Construction
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Claude:** Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Refactor the Redis backend to accept a pre-configured `Async::Redis` instance instead of creating its own connection, leveraging Async::Redis's built-in reconnect, prefix, fork safety, and connection pooling.
+**Goal:** Drop URI-string construction from both `PAGI::Channels` and `PAGI::Channels::Backend::Redis`. Both layers accept instances. Code to an interface, not a class.
 
-**Architecture:** The constructor gains a `redis` option that accepts an `Async::Redis` instance. When provided, URI parsing, connection management, and manual prefix handling are bypassed — Async::Redis handles all of that. When `redis` is not provided, the backend creates its own instance from `uri` (backward compatible). Key prefix management moves to Async::Redis's built-in `prefix` option. The `_ensure_connected` pattern is replaced by Async::Redis's lazy connect + auto-reconnect.
+- `PAGI::Channels::Backend::Redis->new(redis => $async_redis)` — handed a configured `Async::Redis` (or anything that ducks the same interface). Does no connection management, no URI parsing, no top-level prefix handling. Lifecycle, reconnect, prefix, fork-safety, and pooling are the Redis-client's job.
+- `PAGI::Channels->new(backend => $backend_instance)` — handed any backend instance. No URI parsing, no backend dispatch.
 
-**Tech Stack:** Perl 5.18+, Future::AsyncAwait, Async::Redis 0.001005+, Test2::V0
+Magic can come back later as a convenience helper if users ask for it — not in this plan.
+
+**Key packaging consequence:** `Backend::Redis` never `use`s `Async::Redis`; it only calls methods on the passed-in object. The PAGI-Channels distribution therefore has **no Async::Redis dependency** — users bring their own client, and anything with the right method signatures (Async::Redis today, conceivably Net::Async::Redis or Mojo::Redis tomorrow) works. This is what keeps the Redis backend shippable inside the main distribution instead of needing a separate CPAN module.
+
+**Architecture removed:**
+
+- `Backend::Redis`: `connect`, `disconnect`, `_ensure_connected`, `connected`, `_parse_uri`, `uri` constructor option, `prefix` constructor option (top-level prefix delegates to Async::Redis; structural markers `q:` / `g:` / `p:` / `h:` / `pat:` / `delayed` stay).
+- `PAGI::Channels`: `_init_backend`, URI dispatch, `PAGI_CHANNELS_BACKEND` env var.
+
+**Tech stack:** Perl 5.18+, Future::AsyncAwait, Async::Redis 0.001005+ (lazy-connect + fork-safety), Test2::V0.
 
 **Perlbrew:** `source ~/perl5/perlbrew/etc/bashrc && perlbrew use perl-5.40.0@default`
 
-**Test setup:** `docker compose -f t/docker-compose.yml up -d` (starts Redis on localhost:6379)
+**Test setup:** `docker compose -f t/docker-compose.yml up -d`
 
-**Test command:** `prove -lr t/30-redis/ -v`
+**Test command:** `REDIS_HOST=localhost prove -lr t/`
 
 **Verification gates (REQUIRED at end of every task):**
-1. Run: `prove -lr t/ -v` — ALL must pass (memory tests + redis tests if Docker running)
-2. Dead code check: verify no unused methods, stale imports, orphaned helpers
-3. Doc/code consistency: verify POD matches actual constructor options and behavior
-4. Fix ALL issues before committing
+
+1. `prove -lr t/` — ALL pass (memory + facade + redis with Docker up).
+2. Dead-code audit — no unused methods, stale imports, orphan helpers.
+3. Doc/code consistency — POD matches actual constructor signatures and behavior.
+4. Fix all issues before committing.
 
 ---
 
-### Task 1: Accept Async::Redis instance in constructor
+### Task 1: `Backend::Redis` — accept `redis` instance only
 
 **Files:**
-- Modify: `lib/PAGI/Channels/Backend/Redis.pm:24-42` (constructor)
-- Modify: `t/30-redis/01-core.t` (add test for new constructor pattern)
 
-**Context:** Currently the constructor takes a `uri` string, parses it manually, and creates `Async::Redis->new(host => ..., port => ...)` in `connect()`. We add a `redis` option that accepts a pre-configured Async::Redis instance, skipping URI parsing and manual connection management.
+- `lib/PAGI/Channels/Backend/Redis.pm` — rewrite constructor + connection handling.
+- `t/30-redis/01-core.t` through `t/30-redis/06-history.t` — update construction.
+- `t/lib/Test/PAGI/Channels.pm` — consider adding a `make_redis_backend()` helper to reduce per-test boilerplate.
 
-**Step 1: Write the failing test**
+**Context:** Backend::Redis currently parses a URI, owns an Async::Redis it created, runs `_ensure_connected` in every async method, and prepends `$self->{prefix}` in every key helper. We flip that: the caller passes a ready Async::Redis; Async::Redis owns connection lifecycle and user-facing prefix; the backend only concerns itself with structural keys (`q:`, `g:`, …) and channel semantics.
 
-Add to `t/30-redis/01-core.t`, after the existing 'connect to Redis' subtest:
+**Step 1 — write the new construction pattern in tests.**
+
+Add a test helper in `t/lib/Test/PAGI/Channels.pm`:
 
 ```perl
-subtest 'accept Async::Redis instance' => sub {
+sub make_redis {
     require Async::Redis;
-    my $redis = Async::Redis->new(
-        host      => redis_host(),
-        port      => redis_port(),
-        reconnect => 1,
-        prefix    => 'test:instance:',
+    Async::Redis->new(
+        uri    => "redis://" . redis_host() . ":" . redis_port(),
+        prefix => "test:$$:",          # per-process isolation
     );
-    run { $redis->connect };
+}
+```
 
+Then update the first subtest in `t/30-redis/01-core.t` to use it:
+
+```perl
+subtest 'construct from Async::Redis instance' => sub {
+    require PAGI::Channels::Backend::Redis;
     my $backend = PAGI::Channels::Backend::Redis->new(
-        redis => $redis,
+        redis => make_redis(),
     );
-
-    ok($backend->connected, 'connected via passed instance');
-
-    # Verify it works
-    run { $backend->send('ch1', { type => 'test', val => 42 }) };
-    my $msg = run { $backend->poll('ch1') };
-    is($msg->{val}, 42, 'send/poll works with passed instance');
-
-    # Cleanup
     run { $backend->flush() };
-    $redis->disconnect;
+
+    run { $backend->send('ch1', { type => 'hi', n => 1 }) };
+    my $msg = run { $backend->poll('ch1') };
+    is($msg->{n}, 1, 'send/poll round trip via passed Async::Redis');
+
+    run { $backend->flush() };
 };
 ```
 
-**Step 2: Run test to verify it fails**
+**Step 2 — verify RED.**
 
-Run: `prove -lr t/30-redis/01-core.t -v`
-Expected: FAIL — constructor doesn't accept `redis` option
+`REDIS_HOST=localhost prove -lv t/30-redis/01-core.t` — expected failure: constructor doesn't understand `redis =>`.
 
-**Step 3: Update the constructor**
-
-In `lib/PAGI/Channels/Backend/Redis.pm`, replace the constructor (lines 24-42):
+**Step 3 — rewrite `Backend::Redis::new`.**
 
 ```perl
 sub new {
     my ($class, %args) = @_;
 
-    my $self = bless {
-        prefix       => $args{prefix}       // DEFAULT_PREFIX,
+    my $redis = $args{redis}
+        or die "PAGI::Channels::Backend::Redis: 'redis' argument required (Async::Redis instance)";
+
+    return bless {
+        _redis       => $redis,
+        _channel_id  => undef,
         capacity     => $args{capacity}     // DEFAULT_CAPACITY,
         expiry       => $args{expiry}       // DEFAULT_EXPIRY,
         group_expiry => $args{group_expiry} // DEFAULT_GROUP_EXPIRY,
         max_size     => $args{max_size}     // DEFAULT_MAX_SIZE,
         history_size => $args{history_size} // DEFAULT_HISTORY_SIZE,
-        _channel_id  => undef,
     }, $class;
-
-    if ($args{redis}) {
-        # Use provided Async::Redis instance
-        $self->{_redis} = $args{redis};
-        $self->{_connected} = $args{redis}->is_connected ? 1 : 0;
-        $self->{_external_redis} = 1;
-    }
-    else {
-        # Create our own connection from URI (backward compatible)
-        $self->{uri} = $args{uri} // 'redis://localhost:6379';
-        $self->{_redis} = undef;
-        $self->{_connected} = 0;
-        $self->{_external_redis} = 0;
-    }
-
-    return $self;
 }
 ```
 
-**Step 4: Update `connect()` to skip when external Redis provided**
+**Step 4 — delete connection management.**
+
+Remove from the module: `connect`, `disconnect`, `connected`, `_ensure_connected`, `_parse_uri`, and every `await $self->_ensure_connected()` call in async methods. Async::Redis 0.001005+ handles lazy-connect and reconnect itself.
+
+**Step 5 — strip top-level prefix.**
+
+Update the key helpers to drop `$self->{prefix}`:
 
 ```perl
-async sub connect {
+sub _queue_key    { 'q:'   . $_[1] }
+sub _group_key    { 'g:'   . $_[1] }
+sub _presence_key { 'p:'   . $_[1] }
+sub _history_key  { 'h:'   . $_[1] }
+sub _pattern_key  { 'pat:' . $_[1] }
+sub _delayed_key  { 'delayed' }
+```
+
+Remove `DEFAULT_PREFIX` and the `prefix` constructor option. Async::Redis's own `prefix` handles namespacing; these structural markers are relative to that.
+
+Update `flush`:
+
+```perl
+async sub flush {
     my ($self) = @_;
-
-    return 1 if $self->{_external_redis} && $self->{_redis};
-
-    require Async::Redis;
-
-    my ($host, $port) = $self->_parse_uri($self->{uri});
-
-    $self->{_redis} = Async::Redis->new(
-        host      => $host,
-        port      => $port,
-        reconnect => 1,
-    );
-
-    await $self->{_redis}->connect();
-    $self->{_connected} = 1;
-
+    my $keys_ref = await $self->{_redis}->keys('*');
+    my @keys = ref $keys_ref eq 'ARRAY' ? @$keys_ref : ();
+    await $self->{_redis}->del(@keys) if @keys;
     return 1;
 }
 ```
 
-**Step 5: Update `_ensure_connected` to handle external Redis**
+(`keys('*')` is scoped by Async::Redis's prefix — if a caller shares the prefix with other code, that's their problem. Document this on the `flush` POD.)
 
-```perl
-async sub _ensure_connected {
-    my ($self) = @_;
-    return if $self->{_connected};
-    if ($self->{_external_redis}) {
-        await $self->{_redis}->connect() unless $self->{_redis}->is_connected;
-        $self->{_connected} = 1;
-    }
-    else {
-        await $self->connect();
-    }
-}
+**Step 6 — migrate the other Redis test files.**
+
+For each of `02-pubsub.t`, `03-patterns.t`, `04-presence.t`, `05-delayed.t`, `06-history.t`: replace the URI-based `$make_backend` closure with one that calls `make_redis()` and passes the instance. Drop `$backend->connect()` and `$backend->disconnect()` calls — no-ops now.
+
+**Step 7 — verify GREEN.**
+
+`REDIS_HOST=localhost prove -lr t/30-redis/ -v` — all must pass.
+
+**Step 8 — full-suite check and dead-code audit.**
+
+`prove -lr t/` — all pass. Confirm `_parse_uri`, `connect`, `disconnect`, `_ensure_connected`, `connected`, `DEFAULT_PREFIX` are gone. Confirm no `$self->{prefix}` references remain in `Backend/Redis.pm`.
+
+**Step 9 — commit.**
+
 ```
+refactor(redis): accept Async::Redis instance; drop URI and connection management
 
-**Step 6: Update `disconnect()` to not disconnect external Redis**
-
-```perl
-async sub disconnect {
-    my ($self) = @_;
-
-    if ($self->{_redis} && !$self->{_external_redis}) {
-        $self->{_redis}->disconnect();
-        $self->{_redis} = undef;
-    }
-    $self->{_connected} = 0;
-
-    return 1;
-}
-```
-
-**Step 7: Run tests**
-
-Run: `prove -lr t/30-redis/ -v`
-Expected: All pass including new subtest
-
-**Step 8: Run full suite, dead code check, doc check**
-
-Run: `prove -lr t/ -v`
-Verify: `_parse_uri` still used (for URI mode). No dead code. POD not yet updated (Task 3).
-
-**Step 9: Commit**
-
-```bash
-git add lib/PAGI/Channels/Backend/Redis.pm t/30-redis/01-core.t
-git commit -m "feat: accept Async::Redis instance in Redis backend constructor
-
-When a pre-configured Async::Redis instance is passed via the 'redis'
-option, the backend uses it directly instead of creating its own
-connection. This enables reconnect, prefix, fork safety, and
-connection pooling via Async::Redis's built-in features.
-
-Backward compatible: URI-based construction still works."
+Backend::Redis now requires a configured Async::Redis via `redis =>`.
+Connection lifecycle, reconnect, fork-safety, and top-level prefix are
+delegated to Async::Redis. The backend owns only structural keys
+(q:, g:, p:, h:, pat:, delayed). connect, disconnect, _ensure_connected,
+connected, and _parse_uri are gone.
 ```
 
 ---
 
-### Task 2: Delegate key prefixing to Async::Redis
+### Task 2: `PAGI::Channels` — accept `backend` instance only
 
 **Files:**
-- Modify: `lib/PAGI/Channels/Backend/Redis.pm` (key helpers, constructor)
-- Modify: `t/30-redis/01-core.t` (add prefix test)
 
-**Context:** When an external Async::Redis instance is provided with its own `prefix`, the backend's `_queue_key`, `_group_key` etc. should NOT add a second prefix. Async::Redis's `KeyExtractor` already prefixes all key operations. But there's a subtlety: the backend uses custom key naming (`q:channel`, `g:topic`) that Async::Redis's `prefix` doesn't know about — it just prepends a string. So our key helpers still add `q:`, `g:`, etc. but skip the `pagi:` part when using external Redis with its own prefix.
+- `lib/PAGI/Channels.pm` — rewrite `new`, drop `_init_backend`.
+- `t/20-facade/01-basic.t`, `t/20-facade/02-wrap.t` — update construction.
 
-**Step 1: Write the failing test**
+**Context:** The facade currently parses a URI string to pick a backend. We drop the parse and require a backend instance.
 
-Add to `t/30-redis/01-core.t`:
+**Step 1 — update the first facade test.**
 
-```perl
-subtest 'external Redis prefix not doubled' => sub {
-    require Async::Redis;
-    my $redis = Async::Redis->new(
-        host      => redis_host(),
-        port      => redis_port(),
-        prefix    => 'myapp:channels:',
-    );
-    run { $redis->connect };
-
-    my $backend = PAGI::Channels::Backend::Redis->new(
-        redis => $redis,
-    );
-
-    run { $backend->send('ch1', { type => 'test' }) };
-
-    # The key in Redis should be "myapp:channels:q:ch1", NOT "myapp:channels:pagi:q:ch1"
-    # Verify by polling — if prefix is doubled, poll won't find the message
-    my $msg = run { $backend->poll('ch1') };
-    ok($msg, 'message found (prefix not doubled)');
-
-    run { $backend->flush() };
-    $redis->disconnect;
-};
-```
-
-**Step 2: Update constructor to skip backend prefix when external Redis has its own**
-
-When an external Async::Redis is provided, set `$self->{prefix}` to `''` (empty string) — let Async::Redis handle the top-level prefix. The key helpers still add `q:`, `g:`, `p:`, etc. as structure markers.
-
-In the constructor's `if ($args{redis})` block, add:
+In `t/20-facade/01-basic.t`, replace any `PAGI::Channels->new(backend => 'memory://')` with:
 
 ```perl
-# When using external Redis with its own prefix,
-# don't add our default prefix on top
-$self->{prefix} = $args{prefix} // '';
+my $channels = PAGI::Channels->new(
+    backend => PAGI::Channels::Backend::Memory->new,
+);
 ```
 
-**Step 3: Run tests, verify, commit**
+**Step 2 — verify RED.** Test fails because facade still runs URI parsing and doesn't know what to do with an object.
 
-Run: `prove -lr t/30-redis/ -v`
-
-```bash
-git add lib/PAGI/Channels/Backend/Redis.pm t/30-redis/01-core.t
-git commit -m "fix: avoid double-prefixing when external Async::Redis has prefix
-
-When an Async::Redis instance with its own prefix is provided,
-the backend prefix defaults to empty string. The structural
-markers (q:, g:, p:, etc.) are still added by key helpers."
-```
-
----
-
-### Task 3: Enable reconnect for URI-based construction
-
-**Files:**
-- Modify: `lib/PAGI/Channels/Backend/Redis.pm:44-61` (`connect` method)
-- Modify: `t/30-redis/01-core.t` (add reconnect test)
-
-**Context:** When the backend creates its own Async::Redis from URI, it should enable `reconnect => 1` by default. Currently it creates a bare `Async::Redis->new(host, port)` with no reconnect. Also use Async::Redis's URI parsing instead of our manual `_parse_uri`.
-
-**Step 1: Update `connect()` to use URI and enable reconnect**
-
-Replace the `connect()` method:
-
-```perl
-async sub connect {
-    my ($self) = @_;
-
-    return 1 if $self->{_external_redis} && $self->{_redis};
-
-    require Async::Redis;
-
-    $self->{_redis} = Async::Redis->new(
-        uri       => $self->{uri},
-        reconnect => 1,
-        prefix    => $self->{prefix},
-    );
-
-    await $self->{_redis}->connect();
-    $self->{_connected} = 1;
-
-    return 1;
-}
-```
-
-**Step 2: Remove `_parse_uri` method (now dead code)**
-
-Delete the `_parse_uri` method entirely (lines 63-73). Async::Redis handles URI parsing via `Async::Redis::URI`.
-
-**Step 3: When using URI mode, don't double-prefix**
-
-Since we're now passing `prefix` to Async::Redis, the key helpers should use empty prefix to avoid doubling. Update the constructor's else branch:
-
-```perl
-else {
-    $self->{uri} = $args{uri} // 'redis://localhost:6379';
-    $self->{_redis} = undef;
-    $self->{_connected} = 0;
-    $self->{_external_redis} = 0;
-    # prefix will be passed to Async::Redis in connect()
-    # key helpers use empty prefix to avoid doubling
-}
-```
-
-Wait — this changes the key format. Currently keys are `pagi:q:channel`. With this change, Async::Redis prefixes `pagi:` and key helpers add `q:channel`, giving `pagi:q:channel` — same result. But we need to make sure the key helpers DON'T add `pagi:` again. The simplest fix: always set `$self->{prefix}` to the structural-only prefix (empty or user-provided), and let Async::Redis handle the top-level namespace.
-
-Actually, the cleanest approach: store the full prefix for key helpers, but when creating our own Async::Redis, DON'T pass prefix to it (let our key helpers handle it). Only when using external Redis do we let Async::Redis handle prefixing.
-
-Let me simplify. Keep the current key helper behavior as-is:
-
-```perl
-sub _queue_key    { shift->{prefix} . 'q:' . shift }
-```
-
-For URI mode: `$self->{prefix}` = `'pagi:'` (default). Don't pass `prefix` to Async::Redis. Key helpers produce `pagi:q:channel`. Works as before.
-
-For external mode: `$self->{prefix}` = `''`. Async::Redis has its own prefix. Key helpers produce `q:channel`. Async::Redis prepends `myapp:channels:`. Final key: `myapp:channels:q:channel`. Correct.
-
-So `connect()` should NOT pass `prefix` to Async::Redis:
-
-```perl
-async sub connect {
-    my ($self) = @_;
-    return 1 if $self->{_external_redis} && $self->{_redis};
-
-    require Async::Redis;
-
-    $self->{_redis} = Async::Redis->new(
-        uri       => $self->{uri},
-        reconnect => 1,
-    );
-
-    await $self->{_redis}->connect();
-    $self->{_connected} = 1;
-    return 1;
-}
-```
-
-**Step 4: Remove `_parse_uri` (dead code)**
-
-**Step 5: Run tests, verify no regressions, commit**
-
-Run: `prove -lr t/ -v`
-Verify: `_parse_uri` is gone. `connect()` uses Async::Redis URI parsing.
-
-```bash
-git add lib/PAGI/Channels/Backend/Redis.pm
-git commit -m "refactor: use Async::Redis URI parsing, enable reconnect by default
-
-Removes manual _parse_uri in favor of Async::Redis's built-in URI
-support. Enables reconnect => 1 for resilience against Redis restarts."
-```
-
----
-
-### Task 4: Update POD documentation
-
-**Files:**
-- Modify: `lib/PAGI/Channels/Backend/Redis.pm` (POD section)
-
-**Step 1: Replace the CONSTRUCTOR OPTIONS POD**
-
-Update to document both construction patterns:
-
-```pod
-=head1 SYNOPSIS
-
-    # Option 1: URI-based (creates its own connection)
-    my $backend = PAGI::Channels::Backend::Redis->new(
-        uri      => 'redis://localhost:6379',
-        prefix   => 'myapp:',
-        capacity => 100,
-    );
-
-    # Option 2: Pass a pre-configured Async::Redis instance
-    use Async::Redis;
-    my $redis = Async::Redis->new(
-        uri       => 'redis://localhost:6379',
-        reconnect => 1,
-        prefix    => 'myapp:channels:',
-    );
-    await $redis->connect;
-
-    my $backend = PAGI::Channels::Backend::Redis->new(
-        redis => $redis,
-    );
-
-=head1 CONSTRUCTOR OPTIONS
-
-=over 4
-
-=item redis => $async_redis_instance
-
-An L<Async::Redis> instance. When provided, the backend uses this
-connection directly instead of creating its own. This enables
-Async::Redis features like reconnect, fork safety, and connection
-pooling. The backend will not disconnect this instance — the caller
-manages its lifecycle.
-
-=item uri => $redis_uri
-
-Redis connection URI (e.g., C<redis://localhost:6379>). Used only when
-C<redis> is not provided. Default: C<redis://localhost:6379>.
-
-=item prefix => $string
-
-Key prefix for all Redis keys. Default: C<pagi:>. When using an
-external C<redis> instance that has its own prefix, this defaults
-to empty string to avoid double-prefixing.
-
-=item capacity => $int
-
-Maximum messages per channel queue. Default: 100.
-
-=item expiry => $seconds
-
-Message TTL in seconds. Default: 60.
-
-=item group_expiry => $seconds
-
-Subscription group membership TTL. Default: 86400 (1 day).
-
-=item history_size => $int
-
-Messages retained for history. Default: 0 (disabled).
-
-=back
-```
-
-**Step 2: Run full test suite**
-
-Run: `prove -lr t/ -v`
-
-**Step 3: Commit**
-
-```bash
-git add lib/PAGI/Channels/Backend/Redis.pm
-git commit -m "docs: update Redis backend POD for external Async::Redis instance"
-```
-
----
-
-### Task 5: Update Channels facade to pass redis option through
-
-**Files:**
-- Modify: `lib/PAGI/Channels.pm:28-42` (`_init_backend` method)
-- Modify: `t/20-facade/01-basic.t` (add test)
-
-**Context:** The Channels facade currently only passes `uri` to the Redis backend. It should also support passing a `redis` instance for the external Async::Redis pattern.
-
-**Step 1: Write the failing test**
-
-Add to `t/20-facade/01-basic.t`:
-
-```perl
-subtest 'facade accepts redis option' => sub {
-    SKIP: {
-        skip_without_redis();
-        require Async::Redis;
-        my $redis = Async::Redis->new(
-            host => redis_host(),
-            port => redis_port(),
-        );
-        run { $redis->connect };
-
-        my $channels = PAGI::Channels->new(redis => $redis);
-        ok($channels->backend->connected, 'backend connected via facade redis option');
-
-        $redis->disconnect;
-    }
-};
-```
-
-Note: `t/20-facade/01-basic.t` may need to import `skip_without_redis`, `redis_host`, `redis_port` from the test helper.
-
-**Step 2: Update `_init_backend` and `new`**
-
-In `lib/PAGI/Channels.pm`, update `new()`:
+**Step 3 — rewrite `PAGI::Channels::new`.**
 
 ```perl
 sub new {
     my ($class, %args) = @_;
 
-    my $self = bless {
-        _backend => undef,
+    my $backend = $args{backend}
+        or die "PAGI::Channels: 'backend' argument required (PAGI::Channels::Backend instance)";
+
+    return bless {
+        _backend => $backend,
         _counter => 0,
     }, $class;
-
-    if ($args{redis}) {
-        # External Async::Redis instance
-        require PAGI::Channels::Backend::Redis;
-        $self->{_backend} = PAGI::Channels::Backend::Redis->new(
-            redis    => $args{redis},
-            capacity => $args{capacity},
-            expiry   => $args{expiry},
-            (defined $args{prefix} ? (prefix => $args{prefix}) : ()),
-        );
-    }
-    else {
-        my $backend_uri = $args{backend}
-            // $ENV{PAGI_CHANNELS_BACKEND}
-            // 'memory://';
-        $self->_init_backend($backend_uri, %args);
-    }
-
-    return $self;
 }
 ```
 
-And update `_init_backend` to pass through options:
+Delete `_init_backend` entirely. Remove the `PAGI_CHANNELS_BACKEND` env-var logic and any mention in the file.
 
-```perl
-sub _init_backend {
-    my ($self, $uri, %args) = @_;
+**Step 4 — migrate the other facade test.** Same pattern for `02-wrap.t`.
 
-    if ($uri =~ /^memory:/) {
-        require PAGI::Channels::Backend::Memory;
-        $self->{_backend} = PAGI::Channels::Backend::Memory->new(
-            capacity => $args{capacity},
-            expiry   => $args{expiry},
-        );
-    }
-    elsif ($uri =~ /^redis:/) {
-        require PAGI::Channels::Backend::Redis;
-        $self->{_backend} = PAGI::Channels::Backend::Redis->new(
-            uri      => $uri,
-            capacity => $args{capacity},
-            expiry   => $args{expiry},
-            (defined $args{prefix} ? (prefix => $args{prefix}) : ()),
-        );
-    }
-    else {
-        die "Unknown backend: $uri";
-    }
-}
+**Step 5 — verify GREEN.** `prove -lr t/10-memory/ t/20-facade/ -v` — all pass.
+
+**Step 6 — full suite.** `REDIS_HOST=localhost prove -lr t/` — all pass.
+
+**Step 7 — commit.**
+
 ```
+refactor(facade): accept Backend instance; drop URI dispatch and env var
 
-**Step 3: Remove `backend_uri` from $self** (no longer stored — dead state)
-
-**Step 4: Run tests, dead code check, commit**
-
-Run: `prove -lr t/ -v`
-Verify: `backend_uri` removed from $self. `_init_backend` signature updated.
-
-```bash
-git add lib/PAGI/Channels.pm t/20-facade/01-basic.t
-git commit -m "feat: facade accepts redis option for external Async::Redis instance
-
-Channels->new(redis => $redis) passes the instance through to the
-Redis backend. Also passes capacity/expiry/prefix options through
-to both Memory and Redis backends from the facade."
+PAGI::Channels now requires a backend instance. No more URI parsing,
+no more PAGI_CHANNELS_BACKEND env var, no more _init_backend.
 ```
 
 ---
 
-### Task 6: Final verification and cleanup
+### Task 3: update the chat example
 
-**Files:** None (verification only)
+**Files:** `examples/chat/app.pl`
 
-**Step 1: Start Docker Redis**
+**Context:** `examples/chat/app.pl` currently does:
 
-```bash
-docker compose -f t/docker-compose.yml up -d
+```perl
+my $channels = PAGI::Channels->new(
+    backend => $ENV{PAGI_CHANNELS_BACKEND} // 'redis://localhost:6379',
+);
 ```
 
-**Step 2: Run full test suite including Redis tests**
+Replace with explicit instance construction:
 
-```bash
-source ~/perl5/perlbrew/etc/bashrc && perlbrew use perl-5.40.0@default && \
-  prove -lr t/ -v
-```
-Expected: ALL tests pass (memory + facade + redis).
+```perl
+use Async::Redis;
+use PAGI::Channels::Backend::Redis;
 
-**Step 3: Dead code audit**
+my $redis = Async::Redis->new(
+    uri       => $ENV{PAGI_REDIS_URI} // 'redis://localhost:6379',
+    prefix    => 'chat:',
+    reconnect => 1,
+);
 
-Check all modified files for:
-- Unused imports (especially `Async::Redis` if only `require`d)
-- Orphaned methods (e.g., `_parse_uri` should be gone)
-- Stale comments referencing old URI-based connection flow
-
-**Step 4: Doc/code consistency**
-
-Verify POD in Redis.pm and Channels.pm matches actual behavior:
-- `redis` option documented
-- `uri` option documented as fallback
-- `prefix` behavior documented for both modes
-- No references to `_parse_uri` or manual host/port parsing
-
-**Step 5: Stop Docker Redis**
-
-```bash
-docker compose -f t/docker-compose.yml down
+my $channels = PAGI::Channels->new(
+    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
+);
 ```
 
-**Step 6: Commit if any fixes needed**
+Update `examples/chat/README.md`: the run command no longer uses `PAGI_CHANNELS_BACKEND`; show `PAGI_REDIS_URI` if we keep env configurability.
+
+**Step 1 — manual verification.** Start Redis (Docker). Run `pagi-server --workers 4 app.pl`. Open two browser tabs at `http://localhost:5000`, join a room, send messages. Verify cross-worker delivery and presence still work.
+
+**Step 2 — commit.**
+
+```
+refactor(example): chat app constructs Async::Redis + Backend::Redis explicitly
+```
+
+---
+
+### Task 4: update POD
+
+**Files:** `lib/PAGI/Channels.pm`, `lib/PAGI/Channels/Backend/Redis.pm`, `lib/PAGI/Channels/Backend/Memory.pm` (spot check), `lib/PAGI/Channels/Backend.pm` (spot check), `README.md`.
+
+**Step 1 — `PAGI::Channels` POD:**
+
+- Replace the SYNOPSIS `backend => 'redis://...'` with the full form (Async::Redis + Backend::Redis).
+- Remove the `PAGI_CHANNELS_BACKEND` section entirely.
+- Remove the `Memory (memory://)` / `Redis (redis://host:port)` headings in BACKENDS; replace with paragraphs describing `PAGI::Channels::Backend::Memory` and `PAGI::Channels::Backend::Redis` as instance types.
+
+**Step 2 — `Backend::Redis` POD:**
+
+- SYNOPSIS shows `Async::Redis->new(...)` then `Backend::Redis->new(redis => $redis)`.
+- CONSTRUCTOR OPTIONS: remove `uri` and `prefix`. Add `redis` (required). Keep `capacity`, `expiry`, `group_expiry`, `history_size`, `max_size`.
+- Document that the caller owns the Async::Redis lifecycle and that `flush()` wipes everything under the instance's prefix.
+
+**Step 3 — `Backend::Memory` POD:** verify the SYNOPSIS doesn't mention a URI. Should already be instance-based; confirm and move on.
+
+**Step 4 — `README.md`:** update the Quick Start to show the full instance form for Redis.
+
+**Step 5 — commit.**
+
+```
+docs: update POD and README for instance-based construction
+```
+
+---
+
+### Task 5: `cpanfile` cleanup
+
+**Files:** `cpanfile`.
+
+The distribution no longer depends on `Async::Redis` — `Backend::Redis` never `use`s it. Move the Async::Redis dep out of top-level `recommends` and into the test section (tests construct an instance to pass in; runtime users do the same themselves).
+
+**Step 1 — edit `cpanfile`:**
+
+- Remove `recommends 'Async::Redis', '0.001003'` and its "Latest from CPAN" comment from the top-level block.
+- Inside `on 'test' => sub { ... }`, add `recommends 'Async::Redis', '0.001005'` (0.001005+ for lazy-connect + fork-safety in the tests). Tests already skip when Redis isn't reachable; add a guard skipping when `Async::Redis` isn't loadable.
+
+**Step 2 — commit.**
+
+```
+deps(cpanfile): drop Async::Redis from distribution deps
+
+Backend::Redis no longer uses Async::Redis — it calls methods on a
+passed-in object. Users bring their own client. Keep Async::Redis as
+a test-time recommend at >= 0.001005 for the Redis-backend test
+files to run.
+```
+
+---
+
+### Task 6: final verification and cleanup
+
+**Files:** none (verification only).
+
+1. `docker compose -f t/docker-compose.yml up -d`
+2. `REDIS_HOST=localhost prove -lr t/ -v` — ALL pass.
+3. `perl -Ilib -c examples/chat/app.pl` — clean.
+4. Grep audit: `grep -r 'PAGI_CHANNELS_BACKEND\|_parse_uri\|_ensure_connected\|_init_backend' lib/ t/ examples/` returns nothing.
+5. Zero-dep check: `grep -rE 'use Async::Redis|require Async::Redis' lib/` returns nothing — proves the distribution has no Async::Redis dep.
+5. `docker compose -f t/docker-compose.yml down`.
+6. If anything needs a fix, commit it; otherwise done.
 
 ---
 
 ## Summary
 
-| Task | What | Lines Changed (est) |
-|------|------|---------------------|
-| 1 | Accept Async::Redis instance in constructor | ~40 |
-| 2 | Delegate prefix handling for external Redis | ~10 |
-| 3 | Use Async::Redis URI parsing + reconnect, remove _parse_uri | ~15 |
-| 4 | Update POD documentation | ~40 |
-| 5 | Update facade to pass redis option through | ~30 |
-| 6 | Final verification and cleanup | 0 |
+| Task | Scope | Est lines changed |
+|------|-------|-------------------|
+| 1 | `Backend::Redis` pure-instance | ~80 in module, ~30 across 6 test files |
+| 2 | Facade pure-instance | ~20 in module, ~10 across 2 test files |
+| 3 | Chat example | ~10 |
+| 4 | POD + README | ~80 |
+| 5 | `cpanfile` (+ `dist.ini` if wired) | ~3 |
+| 6 | Verification | 0 |
 
-Total: ~135 lines changed across 4 files, 6 tasks.
+Total: ~230 lines across ~15 files, 5 commits.
