@@ -42,7 +42,7 @@ PAGI::Channels::Backend - Role for channel layer backends
 
 =item send($channel, $message) -> Future
 
-=item poll($channel) -> $message | undef
+=item poll($channel) -> Future($message | undef)
 
 =item subscribe($channel, $topic, %opts) -> Future
 

@@ -65,8 +65,8 @@ async sub send {
     return 1;
 }
 
-# Core: poll (synchronous)
-sub poll {
+# Core: poll (async for consistency with Redis backend)
+async sub poll {
     my ($self, $channel) = @_;
 
     my $queue = $self->{queues}{$channel} or return undef;
@@ -544,9 +544,9 @@ Number of messages to retain for history feature. Default: 0 (disabled).
 Send a message to a channel. Returns a Future that resolves to 1 on success,
 or fails with 'ChannelFull' if the channel queue is at capacity.
 
-=head2 poll($channel) -> $message | undef
+=head2 poll($channel) -> Future($message | undef)
 
-Non-blocking poll for a message from a channel. Returns the oldest message
-or undef if the channel is empty.
+Async poll for a message from a channel. Returns a Future that resolves to
+the oldest message or undef if the channel is empty.
 
 =cut
