@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Test::Lib;
-use Test::PAGI::Channels qw(init_loop run skip_without_redis redis_host redis_port);
+use Test::PAGI::Channels qw(init_loop run skip_without_redis make_redis);
 use Test2::V0;
 
 my $loop = init_loop();
@@ -14,10 +14,8 @@ SKIP: {
 
     my $make_backend = sub {
         my $backend = PAGI::Channels::Backend::Redis->new(
-            uri    => "redis://" . redis_host() . ":" . redis_port(),
-            prefix => 'test:pubsub:',
+            redis => make_redis(),
         );
-        run { $backend->connect() };
         run { $backend->flush() };
         return $backend;
     };
@@ -39,7 +37,6 @@ SKIP: {
         is($msg1->{text}, 'hello', 'ch1 received');
         is($msg2->{text}, 'hello', 'ch2 received');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'publish with exclude' => sub {
@@ -56,16 +53,13 @@ SKIP: {
         is(run { $backend->poll('ch2') }, undef, 'ch2 excluded');
         ok(run { $backend->poll('ch3') }, 'ch3 received');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'publish to full channel drops silently' => sub {
         my $backend = PAGI::Channels::Backend::Redis->new(
-            uri      => "redis://" . redis_host() . ":" . redis_port(),
-            prefix   => 'test:pubsub:full:',
+            redis    => make_redis(prefix => "test:pubsub:full:$$:"),
             capacity => 1,
         );
-        run { $backend->connect() };
         run { $backend->flush() };
 
         run { $backend->subscribe('ch1', 'room') };
@@ -81,7 +75,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{type}, 'fill', 'original message');
         is(run { $backend->poll('ch1') }, undef, 'broadcast was dropped');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'unsubscribe' => sub {
@@ -93,7 +86,6 @@ SKIP: {
 
         is(run { $backend->poll('ch1') }, undef, 'unsubscribed channel does not receive');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'subscribe is idempotent' => sub {
@@ -106,7 +98,6 @@ SKIP: {
         ok(run { $backend->poll('ch1') }, 'received once');
         is(run { $backend->poll('ch1') }, undef, 'no duplicate');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'multiple subscribers' => sub {
@@ -132,7 +123,6 @@ SKIP: {
         is(run { $backend->poll('ch2') }->{topic}, 'b', 'ch2 receives topic.b');
         is(run { $backend->poll('ch3') }->{topic}, 'b', 'ch3 receives topic.b');
 
-        run { $backend->disconnect() };
     };
 }
 

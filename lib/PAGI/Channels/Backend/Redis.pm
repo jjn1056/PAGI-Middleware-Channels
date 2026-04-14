@@ -18,80 +18,29 @@ use constant {
     DEFAULT_GROUP_EXPIRY => 86400,
     DEFAULT_MAX_SIZE     => 1_048_576,
     DEFAULT_HISTORY_SIZE => 0,
-    DEFAULT_PREFIX       => 'pagi:',
 };
 
 sub new {
     my ($class, %args) = @_;
 
-    my $uri = $args{uri} // 'redis://localhost:6379';
+    my $redis = $args{redis}
+        or die "PAGI::Channels::Backend::Redis: 'redis' argument required "
+             . "(Async::Redis instance or compatible)";
 
     return bless {
-        uri          => $uri,
-        prefix       => $args{prefix}       // DEFAULT_PREFIX,
+        _redis       => $redis,
+        _channel_id  => undef,
         capacity     => $args{capacity}     // DEFAULT_CAPACITY,
         expiry       => $args{expiry}       // DEFAULT_EXPIRY,
         group_expiry => $args{group_expiry} // DEFAULT_GROUP_EXPIRY,
         max_size     => $args{max_size}     // DEFAULT_MAX_SIZE,
         history_size => $args{history_size} // DEFAULT_HISTORY_SIZE,
-
-        _redis       => undef,
-        _channel_id  => undef,
-        _connected   => 0,
     }, $class;
 }
 
-async sub connect {
-    my ($self) = @_;
-
-    require Async::Redis;
-
-    # Parse URI for host/port
-    my ($host, $port) = $self->_parse_uri($self->{uri});
-
-    $self->{_redis} = Async::Redis->new(
-        host => $host,
-        port => $port,
-    );
-
-    await $self->{_redis}->connect();
-    $self->{_connected} = 1;
-
-    return 1;
-}
-
-sub _parse_uri {
-    my ($self, $uri) = @_;
-
-    if ($uri =~ m{^redis://([^:]+):(\d+)}) {
-        return ($1, $2);
-    }
-    elsif ($uri =~ m{^redis://([^/]+)}) {
-        return ($1, 6379);
-    }
-    return ('localhost', 6379);
-}
-
-async sub disconnect {
-    my ($self) = @_;
-
-    if ($self->{_redis}) {
-        $self->{_redis}->disconnect();
-        $self->{_redis} = undef;
-    }
-    $self->{_connected} = 0;
-
-    return 1;
-}
-
-sub connected { shift->{_connected} }
-
-# Auto-connect on first use
-async sub _ensure_connected {
-    my ($self) = @_;
-    return if $self->{_connected};
-    await $self->connect();
-}
+# Async::Redis does not prefix KEYS/SCAN patterns, so we prepend
+# the client's own prefix when we need namespace-scoped lookups.
+sub _redis_prefix { $_[0]->{_redis}{prefix} // '' }
 
 sub set_channel_id {
     my ($self, $channel_id) = @_;
@@ -100,13 +49,14 @@ sub set_channel_id {
 
 sub channel_id { shift->{_channel_id} }
 
-# Key helpers
-sub _queue_key    { shift->{prefix} . 'q:' . shift }
-sub _group_key    { shift->{prefix} . 'g:' . shift }
-sub _presence_key { shift->{prefix} . 'p:' . shift }
-sub _history_key  { shift->{prefix} . 'h:' . shift }
-sub _pattern_key  { shift->{prefix} . 'pat:' . shift }
-sub _delayed_key  { shift->{prefix} . 'delayed' }
+# Key helpers — structural only. Top-level namespace comes from
+# the Async::Redis instance's own prefix.
+sub _queue_key    { 'q:'   . $_[1] }
+sub _group_key    { 'g:'   . $_[1] }
+sub _presence_key { 'p:'   . $_[1] }
+sub _history_key  { 'h:'   . $_[1] }
+sub _pattern_key  { 'pat:' . $_[1] }
+sub _delayed_key  { 'delayed' }
 
 # Helper to convert pattern to regex (same as Memory backend)
 sub _pattern_to_regex {
@@ -173,8 +123,6 @@ async sub send {
 async sub poll {
     my ($self, $channel) = @_;
 
-    return undef unless $self->{_connected};
-
     # Drain any due delayed messages into their target queues first
     await $self->process_delayed;
 
@@ -189,7 +137,6 @@ async sub poll {
 async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
 
-    await $self->_ensure_connected();
     my $key = $self->_group_key($topic);
     await $self->{_redis}->sadd($key, $channel);
     await $self->{_redis}->expire($key, $self->{group_expiry});
@@ -267,7 +214,6 @@ async sub punsubscribe {
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
 
-    await $self->_ensure_connected();
     my $exclude = $opts{exclude} // [];
     $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
     my %excluded = map { $_ => 1 } @$exclude;
@@ -294,17 +240,19 @@ async sub publish {
     }
 
     # Pattern subscribers - scan for all pattern keys
-    my $pattern_keys_ref = await $self->{_redis}->keys($self->{prefix} . 'pat:*');
+    my $pattern_keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'pat:*');
     my @pattern_keys = ref $pattern_keys_ref eq 'ARRAY' ? @$pattern_keys_ref : ();
 
     for my $pkey (@pattern_keys) {
-        # Extract channel from key (format: prefix:pat:channel)
+        # Extract channel from key (KEYS returns absolute keys including
+        # the client's prefix; everything after 'pat:' is our channel name).
         my ($channel) = $pkey =~ /pat:(.+)$/;
         next unless $channel;
         next if $excluded{$channel};
         next if $delivered{$channel};  # Already delivered via exact match
 
-        my $patterns_ref = await $self->{_redis}->smembers($pkey);
+        # Use the relative key — Async::Redis will re-apply its prefix.
+        my $patterns_ref = await $self->{_redis}->smembers($self->_pattern_key($channel));
         my @patterns = ref $patterns_ref eq 'ARRAY' ? @$patterns_ref : ();
 
         for my $pattern (@patterns) {
@@ -319,19 +267,21 @@ async sub publish {
     return 1;
 }
 
-# Flush all data
+# Flush all data under the Async::Redis instance's prefix.
+# Note: this deletes EVERYTHING under that prefix, not just our
+# structural keys — the caller should use a dedicated prefix if
+# they want isolation from other keyspaces.
 async sub flush {
     my ($self) = @_;
 
-    await $self->_ensure_connected();
+    my $prefix = $self->_redis_prefix;
+    my $keys_ref = await $self->{_redis}->keys($prefix . '*');
+    my @abs_keys = ref $keys_ref eq 'ARRAY' ? @$keys_ref : ();
+    return 1 unless @abs_keys;
 
-    # Delete all keys with our prefix
-    my $keys_ref = await $self->{_redis}->keys($self->{prefix} . '*');
-    my @keys = ref $keys_ref eq 'ARRAY' ? @$keys_ref : ();
-
-    if (@keys) {
-        await $self->{_redis}->del(@keys);
-    }
+    # Strip prefix so Async::Redis re-applies it exactly once on DEL.
+    my @relative = map { my $k = $_; $k =~ s/^\Q$prefix\E// if length $prefix; $k } @abs_keys;
+    await $self->{_redis}->del(@relative);
 
     return 1;
 }
@@ -340,23 +290,20 @@ async sub flush {
 async sub cleanup {
     my ($self, $channel) = @_;
 
-    # Not connected, nothing to cleanup
-    return 1 unless $self->{_redis};
-
     # Remove queue
     await $self->{_redis}->del($self->_queue_key($channel));
 
     # Remove from all groups (scan for membership) and handle presence
-    my $group_keys_ref = await $self->{_redis}->keys($self->{prefix} . 'g:*');
+    my $group_keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'g:*');
     my @group_keys = ref $group_keys_ref eq 'ARRAY' ? @$group_keys_ref : ();
 
-    for my $key (@group_keys) {
-        # Extract topic from key
-        my ($topic) = $key =~ /g:(.+)$/;
+    for my $abs_key (@group_keys) {
+        # KEYS returns absolute keys; extract topic after the 'g:' marker.
+        my ($topic) = $abs_key =~ /g:(.+)$/;
         next unless $topic;
 
-        # Check if channel is member
-        my $is_member = await $self->{_redis}->sismember($key, $channel);
+        my $gkey = $self->_group_key($topic);  # relative; Async::Redis prefixes.
+        my $is_member = await $self->{_redis}->sismember($gkey, $channel);
         next unless $is_member;
 
         # Check for presence data
@@ -374,7 +321,7 @@ async sub cleanup {
             }, exclude => $channel);
         }
 
-        await $self->{_redis}->srem($key, $channel);
+        await $self->{_redis}->srem($gkey, $channel);
     }
 
     # Remove pattern subscriptions
@@ -416,7 +363,6 @@ async sub untrack {
 async sub list_presence {
     my ($self, $topic) = @_;
 
-    await $self->_ensure_connected();
     my $key = $self->_presence_key($topic);
     my $data_ref = await $self->{_redis}->hgetall($key);
 

@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Test::Lib;
-use Test::PAGI::Channels qw(init_loop run skip_without_redis redis_host redis_port);
+use Test::PAGI::Channels qw(init_loop run skip_without_redis make_redis);
 use Test2::V0;
 
 my $loop = init_loop();
@@ -14,10 +14,8 @@ SKIP: {
 
     my $make_backend = sub {
         my $backend = PAGI::Channels::Backend::Redis->new(
-            uri    => "redis://" . redis_host() . ":" . redis_port(),
-            prefix => 'test:presence:',
+            redis => make_redis(),
         );
-        run { $backend->connect() };
         run { $backend->flush() };
         return $backend;
     };
@@ -37,7 +35,6 @@ SKIP: {
         @presence = run { $backend->list_presence('workers.pool') };
         is(scalar @presence, 0, 'presence removed');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'subscribe with presence option' => sub {
@@ -53,7 +50,6 @@ SKIP: {
         is($presence[0]->{user}, 'alice', 'correct user');
         is($presence[0]->{status}, 'online', 'correct status');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'presence events on join/leave' => sub {
@@ -79,7 +75,6 @@ SKIP: {
         is($event->{type}, 'presence.leave', 'presence.leave event');
         is($event->{presence}{user}, 'ch2', 'correct leaver');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'list_presence returns all current' => sub {
@@ -100,7 +95,6 @@ SKIP: {
         my @names = sort map { $_->{name} } @presence;
         is(\@names, ['Alice', 'Bob', 'Carol'], 'correct names');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'cleanup removes presence and broadcasts leave' => sub {
@@ -129,7 +123,6 @@ SKIP: {
         my @presence = run { $backend->list_presence('room') };
         is(scalar @presence, 1, 'only ch1 presence remains');
 
-        run { $backend->disconnect() };
     };
 }
 

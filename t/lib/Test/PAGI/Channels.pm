@@ -12,6 +12,7 @@ our @EXPORT_OK = qw(
     skip_without_redis
     redis_host
     redis_port
+    make_redis
 );
 our %EXPORT_TAGS = (all => \@EXPORT_OK);
 
@@ -38,6 +39,18 @@ sub run(&) {
 
 sub redis_host { $ENV{REDIS_HOST} // 'localhost' }
 sub redis_port { $ENV{REDIS_PORT} // 6379 }
+
+sub make_redis {
+    my (%overrides) = @_;
+    require Async::Redis;
+    my $redis = Async::Redis->new(
+        uri    => "redis://" . redis_host() . ":" . redis_port(),
+        prefix => "test:$$:",
+        %overrides,
+    );
+    $redis->connect->get;
+    return $redis;
+}
 
 sub skip_without_redis {
     my $host = redis_host();

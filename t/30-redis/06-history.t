@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Test::Lib;
-use Test::PAGI::Channels qw(init_loop run skip_without_redis redis_host redis_port);
+use Test::PAGI::Channels qw(init_loop run skip_without_redis make_redis);
 use Test2::V0;
 
 my $loop = init_loop();
@@ -15,11 +15,9 @@ SKIP: {
     my $make_backend = sub {
         my %opts = @_;
         my $backend = PAGI::Channels::Backend::Redis->new(
-            uri          => "redis://" . redis_host() . ":" . redis_port(),
-            prefix       => 'test:history:',
+            redis        => make_redis(),
             history_size => $opts{history_size} // 10,
         );
-        run { $backend->connect() };
         run { $backend->flush() };
         return $backend;
     };
@@ -41,7 +39,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{n}, 3, 'history msg 3');
         is(run { $backend->poll('ch1') }, undef, 'no more');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'history respects count limit' => sub {
@@ -59,7 +56,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{n}, 10, 'only last 3: msg 10');
         is(run { $backend->poll('ch1') }, undef, 'no more');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'history buffer respects global limit' => sub {
@@ -79,7 +75,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{n}, 10, 'msg 10');
         is(run { $backend->poll('ch1') }, undef, 'no more');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'new messages after subscribe arrive normally' => sub {
@@ -98,7 +93,6 @@ SKIP: {
         is($msg->{type}, 'live', 'live message received');
         is($msg->{n}, 2, 'correct content');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'history does not include presence events' => sub {
@@ -133,7 +127,6 @@ SKIP: {
         is($msgs[0]->{n}, 1, 'first history message');
         is($msgs[1]->{n}, 2, 'second history message');
 
-        run { $backend->disconnect() };
     };
 }
 

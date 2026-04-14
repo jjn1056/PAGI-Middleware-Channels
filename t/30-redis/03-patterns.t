@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Test::Lib;
-use Test::PAGI::Channels qw(init_loop run skip_without_redis redis_host redis_port);
+use Test::PAGI::Channels qw(init_loop run skip_without_redis make_redis);
 use Test2::V0;
 
 my $loop = init_loop();
@@ -14,10 +14,8 @@ SKIP: {
 
     my $make_backend = sub {
         my $backend = PAGI::Channels::Backend::Redis->new(
-            uri    => "redis://" . redis_host() . ":" . redis_port(),
-            prefix => 'test:patterns:',
+            redis => make_redis(),
         );
-        run { $backend->connect() };
         run { $backend->flush() };
         return $backend;
     };
@@ -37,7 +35,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{n}, 2, 'chat.general matched');
         is(run { $backend->poll('ch1') }, undef, 'chat.room1.messages NOT matched');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'multi-level wildcard (**)' => sub {
@@ -56,7 +53,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{n}, 3, 'notifications.user.123.email matched');
         is(run { $backend->poll('ch1') }, undef, 'alerts NOT matched');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'punsubscribe' => sub {
@@ -68,7 +64,6 @@ SKIP: {
 
         is(run { $backend->poll('ch1') }, undef, 'punsubscribed pattern no longer matches');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'mixed exact and pattern subscriptions' => sub {
@@ -85,7 +80,6 @@ SKIP: {
         ok(run { $backend->poll('ch1') }, 'received message');
         is(run { $backend->poll('ch1') }, undef, 'no duplicate from pattern');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'multiple patterns per channel' => sub {
@@ -102,7 +96,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{n}, 2, 'orders.new matched');
         is(run { $backend->poll('ch1') }, undef, 'products.update NOT matched');
 
-        run { $backend->disconnect() };
     };
 }
 

@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Test::Lib;
-use Test::PAGI::Channels qw(init_loop run skip_without_redis redis_host redis_port);
+use Test::PAGI::Channels qw(init_loop run skip_without_redis make_redis);
 use Test2::V0;
 use Future::IO;
 
@@ -15,10 +15,8 @@ SKIP: {
 
     my $make_backend = sub {
         my $backend = PAGI::Channels::Backend::Redis->new(
-            uri    => "redis://" . redis_host() . ":" . redis_port(),
-            prefix => 'test:delayed:',
+            redis => make_redis(),
         );
-        run { $backend->connect() };
         run { $backend->flush() };
         return $backend;
     };
@@ -46,7 +44,6 @@ SKIP: {
         my $msg = run { $backend->poll('ch1') };
         is($msg->{type}, 'delayed', 'delivered after delay');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'publish_delayed delivers to all subscribers after delay' => sub {
@@ -71,7 +68,6 @@ SKIP: {
         is(run { $backend->poll('ch1') }->{type}, 'broadcast', 'ch1 received');
         is(run { $backend->poll('ch2') }->{type}, 'broadcast', 'ch2 received');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'multiple delayed messages in order' => sub {
@@ -93,7 +89,6 @@ SKIP: {
         is(run { $backend->poll('ch') }->{n}, 3, 'second (0.10s)');
         is(run { $backend->poll('ch') }->{n}, 2, 'third (0.15s)');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'process_delayed returns count of processed messages' => sub {
@@ -112,7 +107,6 @@ SKIP: {
         my $count = run { $backend->process_delayed() };
         is($count, 3, 'processed 3 messages');
 
-        run { $backend->disconnect() };
     };
 
     subtest 'poll() delivers due delayed messages without manual pump' => sub {
@@ -133,7 +127,6 @@ SKIP: {
         my $msg = run { $backend->poll('ch1') };
         is($msg->{type}, 'reminder', 'delayed message pumped by poll()');
 
-        run { $backend->disconnect() };
     };
 }
 
