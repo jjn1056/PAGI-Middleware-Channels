@@ -1,227 +1,124 @@
-# Feature: Django Channels Parity (and Beyond)
+# PAGI-Channels — Outstanding Work
 
-## Status: BRAINSTORMING
+**What this is:** An inventory of what's *not* done in PAGI-Channels, organized so we can decide what to tackle next and what to defer. The four headline v1 features (presence, pattern subscriptions, delayed messages, message history) are implemented in both the Memory and Redis backends. What follows is the list of gaps.
 
-## Repo Recon
+**Verification state (this session):**
 
-| Item | Finding |
-|------|---------|
-| Layout | `docs/design/` only - no `lib/` or `t/` yet |
-| Test framework | Test2::V0 (per PAGI conventions) |
-| Dependencies | cpanfile (to be created) |
-| Build system | Dist::Zilla |
-| Test command | `prove -l t/` |
-| Min Perl | 5.018+ (for signatures, postderef) |
-| Conventions | Follow PAGI patterns |
+- Memory + facade tests: **pass** (36 tests, 9 files).
+- Redis tests: **not run this session** (Docker not up). Last Redis-touching commit: `6e6a98a "Fix async poll handling for Redis backend"`.
 
-**Note:** This is a greenfield project. Design doc exists at `docs/design/channel-layer.mkdn`.
+---
 
-## CRITICAL CONSTRAINT: Loop Agnosticism
+## 1. Code gaps
 
-**Main library code MUST use Future::IO only** - no direct IO::Async, Mojo::IOLoop, or other loop-specific code.
+### 1.1 Sereal serializer — recommended but not wired
 
-- `lib/` → Future::IO primitives only
-- `t/` → IO::Async for test harness (via Future::IO backend)
-- `examples/` → Can show IO::Async examples
-- `docs/` → Must document loop agnosticism prominently
+`cpanfile` has `recommends 'Sereal::Encoder'` / `'Sereal::Decoder'`, and the original brainstorm listed "JSON default, Sereal optional." Nothing in `lib/` imports or uses Sereal — `JSON::MaybeXS` is the only serializer. Pick one:
 
-This ensures PAGI-Channels works with any Future::IO-compatible event loop.
+- **Drop** from `recommends` (simple, honest about current scope).
+- **Wire in** behind a `serializer => 'sereal'` constructor option on both backends.
 
-## Research Summary
+---
 
-### Django Channels Features
+## 2. Planned refactor (not started)
 
-| Feature | Django Built-in | PAGI Design |
-|---------|-----------------|-------------|
-| group_add/discard/send | Yes | Yes (subscribe/unsubscribe/publish) |
-| send (point-to-point) | Yes | Yes |
-| Memory backend | Yes (dev only) | Yes (v1) |
-| Redis backend | Yes (channels_redis) | Planned |
-| Group expiry | Yes | Yes (86400s default) |
-| Message expiry | Yes | Yes (60s default) |
-| Capacity limits | Yes | Yes (100 msg default) |
-| Automatic cleanup | Yes | Yes |
-| Auth middleware | Yes | TBD (via PAGI middleware) |
-| **Presence tracking** | **No** (needs django-channels-presence) | MAY implement |
-| **Pattern subscriptions** | **No** | MAY implement |
-| **Message history** | **No** | MAY implement |
-| **Delayed messages** | **No** | Not in design |
+### 2.1 Redis backend: accept a pre-configured `Async::Redis` instance
 
-### Phoenix Channels Features (Elixir)
+Full plan: `docs/plans/2026-03-16-redis-backend-upgrade.md` (6 TDD tasks, ~135 lines across 4 files). Moves connection management, auto-reconnect, prefix handling, fork safety, and connection pooling from the backend into `Async::Redis`. Adds a `redis =>` constructor option; URI mode stays backward compatible. Deletes `_parse_uri`.
 
-| Feature | Phoenix | PAGI Design |
-|---------|---------|-------------|
-| Built-in Presence | **Yes** (CRDT-based) | MAY implement |
-| Presence diffs (join/leave events) | **Yes** | Not in design |
-| Presence metadata | **Yes** | Not in design |
-| Distributed presence (multi-node) | **Yes** | Not in design |
-| PubSub | Yes | Yes (publish) |
-| Millions of connections | Yes | Depends on backend |
+**Likely blocks a `0.01` CPAN release** — the current backend has no auto-reconnect, so a Redis restart kills the app.
 
-## Feature Gap Analysis
+---
 
-### To Match Django Channels
-PAGI-Channels design already covers Django's core features. Implementation needed.
+## 3. Uncommitted WIP on `main` — decide: land or revert
 
-### To EXCEED Django Channels
-These features would make PAGI-Channels better than Django Channels:
+| File | Change | Disposition |
+|---|---|---|
+| `lib/PAGI/Channels/Backend/Redis.pm` | `flush()` now calls `_ensure_connected` first | Correctness fix. |
+| `examples/chat/app.pl` | Refactored onto `PAGI::WebSocket` + `PAGI::App::Router` (`/ws/chat/:room`); lifespan startup hook calls `$channels->backend->flush` to clear stale presence | Adds `PAGI::WebSocket` + `PAGI::App::Router` as example-only deps. Acceptable? |
+| `examples/chat/public/js/app.js` | Client URL updated for path-param route | Paired with above. |
+| `examples/chat/README.md` | Added `redis-cli FLUSHDB` note | Trivial. |
+| `docs/plans/2026-03-16-redis-backend-upgrade.md` *(new)* | Plan for §2.1 | Commit with Task 1 or now as a pending marker. |
 
-1. **Built-in Presence Tracking** (Phoenix has this, Django doesn't)
-2. **Pattern Subscriptions** (`chat.*` matches `chat.room1`, `chat.room2`)
-3. **Delayed/Scheduled Messages** (send message after X seconds)
-4. **Message History/Replay** (new subscribers get last N messages)
+---
 
-## Design Decisions (from brainstorming)
+## 4. Release engineering (CPAN readiness)
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| v1 Features | Presence + Patterns + Delays + History | Exceed Django, "fail big > win small" |
-| Presence API | Hybrid (auto-track via subscribe + explicit track) | Flexible, covers all use cases |
-| Pattern syntax | Redis-style `*` (single) and `**` (recursive) | Explicit, matches Redis PSUBSCRIBE |
-| Presence events | Both poll AND events | Poll for initial state, events for real-time |
-| Backends in v1 | Memory + Redis | Async::Redis ready, Redis makes delays/history trivial |
-| Event loop | Future::IO only (loop agnostic) | Works with IO::Async, Mojo, UV, etc. |
-| Serialization | JSON default, Sereal optional | Debuggable default, fast opt-in |
-| History config | Global default + per-topic override | Simple but flexible |
-| Delay cancellation | No cancellation in v1 | Keep simple, add later if needed |
-| Testing | Docker for Redis tests | Real Redis in CI/local testing |
+All of these block an honest `cpanm PAGI::Channels`.
 
-### Presence API (decided)
+### 4.1 No `Changes` file
+`@Basic` generates `LICENSE` but not `Changes`. Required for CPAN. Add `[NextRelease]` to `dist.ini` and bootstrap a `Changes` file.
 
-```perl
-# Auto-track via subscribe (most common case)
-await $channels->subscribe("chat.room1", presence => { user => 'alice', status => 'online' });
+### 4.2 `dist.ini` is minimal
+Current: `[@Basic]`, `[AutoPrereqs]`, `[MetaJSON]`, `[PodSyntaxTests]`, `[Prereqs]`. Missing at minimum:
 
-# Explicit track for non-subscription presence (workers, services)
-await $channels->track("workers.pool", { worker_id => $$, started => time() });
-await $channels->untrack("workers.pool");
+- `[@Git]` — tagged releases, clean-tree check
+- `[NextRelease]` — Changes integration
+- `[TestRelease]`, `[ConfirmRelease]`, `[UploadToCPAN]` — release pipeline
+- `[MetaResources]` — bugtracker and repo URL (shows on MetaCPAN)
+- `[OurPkgVersion]` or `[AutoVersion]` — version management across all packages
+- `[PodCoverageTests]` — catches missing POD (see §5.2)
+- `[ReadmeFromPod]` — generate `README.md` from main-module POD
 
-# Poll presence anytime
-my @users = await $channels->list_presence("chat.room1");
+### 4.3 No CI
+No `.github/workflows/`, no Travis config. Minimum: one workflow that runs `prove -lr t/` on push, ideally across a Perl version matrix, with a Redis service container.
 
-# Presence events arrive in receive queue
-my $event = await $receive->();
-# { type => 'presence.join', topic => 'chat.room1', presence => { user => 'alice', ... } }
-# { type => 'presence.leave', topic => 'chat.room1', presence => { user => 'alice', ... } }
-```
+### 4.4 `Async::Redis` version pinning inconsistent
+- `cpanfile`: `recommends 'Async::Redis', '0.001003'`
+- `dist.ini`: no `Async::Redis` entry (core prereqs only)
+- `docs/plans/2026-03-16-redis-backend-upgrade.md`: references `0.001005+`
 
-### Pattern Subscriptions (decided)
+Pick a minimum and normalize across both files.
 
-```perl
-# Single-level: * matches exactly one segment
-await $channels->psubscribe("chat.*");
-# Matches: chat.room1, chat.general
-# NOT: chat.room1.messages
+### 4.5 Version strategy
+`$VERSION = '0.001'` hard-coded in `Channels.pm`; `Backend.pm`, `Backend::Memory`, `Backend::Redis` have no `$VERSION` at all. `[OurPkgVersion]` in `dist.ini` would fix this uniformly.
 
-# Multi-level: ** matches zero or more segments
-await $channels->psubscribe("notifications.**");
-# Matches: notifications, notifications.user, notifications.user.123.email
-```
+---
 
-### Delayed Messages (decided)
+## 5. Documentation cleanup
 
-```perl
-# Point-to-point with delay
-await $channels->send($channel, { type => 'reminder', ... }, delay => 300);
+### 5.1 `docs/design/channel-layer.mkdn` is stale
+Says `Version 0.3 / Status: Design Document` and `v1: Memory Backend Only / Future: Redis Backend`. Redis is in v1. Either rewrite to reflect the shipped architecture or move to `docs/design/archive/`.
 
-# Broadcast with delay
-await $channels->publish("chat.room1", { type => 'warning', ... }, delay => 60);
-```
+### 5.2 POD coverage is thin on the backends
+`Backend::Memory` POD documents `send` and `poll` only — the other 13+ required methods (`publish`, `subscribe`, `track`, `psubscribe`, `process_delayed`, `subscribe_with_history`, etc.) have no POD. `Backend::Redis` POD: same pattern, needs full audit. Enabling `[PodCoverageTests]` (§4.2) will surface the full list.
 
-### Message History (decided)
+### 5.3 README
+Quick-start is solid; doesn't mention `track` / `untrack` / `psubscribe` / `history` / Django aliases. Probably acceptable for a CPAN README — flag for later.
 
-```perl
-# Subscribe with history - receive last N messages immediately
-await $channels->subscribe("chat.room1", history => 10);
+---
 
-# Configure history retention per-topic or globally (TBD)
-```
+## 6. Deferred / explicit non-goals
 
-## Open Questions
+Decided out of scope in the original brainstorm; remain out absent new signal:
 
-**All questions resolved!** Ready to proceed to planning phase.
+- **Delay cancellation** — "No cancellation in v1" still holds.
+- **Auth middleware** — separate concern, belongs in a different PAGI distribution.
+- **CRDT-based presence (Phoenix-style)** — current model (broadcast `presence.join`/`presence.leave` + poll `list_presence`) is sufficient for target use cases. Revisit only if strong multi-region merge guarantees become a real ask.
 
-## Proposed CPAN Dependencies (needs approval)
+---
 
-### Required
-| Module | Why | Risk Reduction |
-|--------|-----|----------------|
-| Future::AsyncAwait | async/await syntax | Core to design |
-| Future::IO | Loop-agnostic I/O | **Critical** for portability |
-| Role::Tiny | Backend interface | Lightweight, no deps |
-| JSON::MaybeXS | Default serialization | Fast, portable JSON |
-| Async::Redis | Redis backend | You built it! Ready to use |
+## Appendix: v1 parity reference
 
-### Optional (for performance)
-| Module | Why | When Needed |
-|--------|-----|-------------|
-| Sereal::Encoder + Sereal::Decoder | Fast serialization | High-throughput deployments |
+Informational. The code is authoritative.
 
-### Test Dependencies
-| Module | Why |
-|--------|-----|
-| Test2::V0 | Modern test framework |
-| IO::Async | Event loop for tests |
-| Test::Pod | POD validation |
+### vs. Django Channels
+| Feature | Django | PAGI-Channels |
+|---|---|---|
+| `group_add` / `group_discard` / `group_send` | Yes | Yes — real aliases for `subscribe` / `unsubscribe` / `publish` (`Channels.pm:189-191`) |
+| Memory backend | Yes | Yes |
+| Redis backend | Yes | Yes |
+| Capacity / message expiry / group expiry | Yes | Yes |
 
-### Installation Note
-**Use latest Async::Redis from CPAN** - `cpanm Async::Redis` (not local dev version)
+### vs. Phoenix Channels
+| Feature | Phoenix | PAGI-Channels |
+|---|---|---|
+| Built-in presence | Yes (CRDT) | Yes (event-broadcast + poll) |
+| Presence join/leave events | Yes | Yes |
+| Presence metadata | Yes | Yes — arbitrary hash |
+| Multi-node presence | Yes | Yes via Redis backend (non-CRDT) |
 
-## Example Applications (v1 deliverables)
-
-### Example 1: Presence-Enabled Chat with Workers
-Based on PAGI WebSocket chat example, enhanced with:
-- Channel layer for cross-worker messaging
-- Presence tracking (who's online)
-- Custom events for worker communication
-- Multiple worker processes sharing connections
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Worker 1   │     │  Worker 2   │     │  Worker 3   │
-│  (WS conns) │     │  (WS conns) │     │  (WS conns) │
-└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │    Redis    │
-                    │  (channels) │
-                    └─────────────┘
-```
-
-### Example 2: Task Queue with Progress Updates
-Real-time task processing with:
-- HTTP endpoint submits tasks
-- Worker pool processes tasks
-- WebSocket clients receive progress updates
-- Demonstrates request/reply pattern + broadcast
-
-```perl
-# HTTP: Submit task
-POST /tasks → { task_id => 123 }
-
-# Worker: Process + broadcast progress
-await $channels->publish("task.123.progress", { percent => 50 });
-
-# WebSocket: Client subscribes to updates
-await $channels->subscribe("task.123.**");
-```
-
-## Testing Infrastructure
-
-- **Docker Compose** for Redis (same pattern as Async::Redis)
-- Tests run with `REDIS_HOST=localhost prove -l t/`
-- CI-friendly: skip Redis tests if not available
-
-## Sources
-
-- [Django Channels Documentation](https://channels.readthedocs.io/)
-- [Django Channels Channel Layers](https://channels.readthedocs.io/en/stable/topics/channel_layers.html)
-- [django-channels-presence](https://django-channels-presence.readthedocs.io/en/latest/)
-- [Phoenix.Presence Documentation](https://hexdocs.pm/phoenix/Phoenix.Presence.html)
-- [Phoenix Presence Guide](https://hexdocs.pm/phoenix/presence.html)
-
-## Scratch Space
-
-(Notes during brainstorming)
+### Exceeds both
+- Pattern subscriptions (`*` single segment, `**` recursive)
+- Delayed messages
+- Message history on subscribe
