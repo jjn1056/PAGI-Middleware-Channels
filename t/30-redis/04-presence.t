@@ -177,6 +177,53 @@ SKIP: {
         like($err, qr/exceeds limit/, 'croaks with helpful message');
         like($err, qr/scan_presence/, 'message mentions scan_presence');
     };
+
+    subtest 'scan_presence with cursor 0 — small set' => sub {
+        my $backend = $make_backend->();
+
+        for my $i (1..3) {
+            $backend->set_channel_id("u$i");
+            run { $backend->subscribe("u$i", 'scan.room', presence => { n => $i }) };
+        }
+
+        # Collect all entries (may take multiple rounds for Redis)
+        my @all;
+        my $cursor = 0;
+        do {
+            my @batch;
+            ($cursor, @batch) = run { $backend->scan_presence('scan.room', cursor => $cursor, count => 10) };
+            push @all, @batch;
+        } while ($cursor);
+
+        is(scalar @all, 3, 'collected all 3 entries');
+    };
+
+    subtest 'scan_presence collects all entries across pages' => sub {
+        my $backend = $make_backend->();
+
+        for my $i (1..10) {
+            $backend->set_channel_id("u$i");
+            run { $backend->subscribe("u$i", 'bigpage.room', presence => { n => $i }) };
+        }
+
+        my @all;
+        my $cursor = 0;
+        do {
+            my @batch;
+            ($cursor, @batch) = run { $backend->scan_presence('bigpage.room', cursor => $cursor, count => 3) };
+            push @all, @batch;
+        } while ($cursor);
+
+        is(scalar @all, 10, 'collected all 10 entries across pages');
+    };
+
+    subtest 'scan_presence on empty topic returns empty' => sub {
+        my $backend = $make_backend->();
+
+        my ($cursor, @entries) = run { $backend->scan_presence('empty.room', cursor => 0, count => 10) };
+        is($cursor, 0, 'cursor 0 on empty');
+        is(scalar @entries, 0, 'no entries');
+    };
 }
 
 done_testing;

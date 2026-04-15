@@ -405,6 +405,32 @@ async sub count_presence {
     return await $self->{_redis}->hlen($key);
 }
 
+# Presence: scan_presence (cursor-based pagination via HSCAN)
+# cursor => 0 to start; returns 0 when iteration complete.
+# count is a hint to Redis — actual batch size may vary.
+async sub scan_presence {
+    my ($self, $topic, %opts) = @_;
+    my $cursor = $opts{cursor} // 0;
+    my $count  = $opts{count}  // 100;
+
+    my $key = $self->_presence_key($topic);
+
+    # HSCAN returns [$next_cursor, [$field1, $val1, $field2, $val2, ...]]
+    my $result = await $self->{_redis}->hscan($key, $cursor, 'COUNT', $count);
+    my ($next_cursor, $fields) = @$result;
+
+    my @entries;
+    if ($fields && @$fields) {
+        my @pairs = @$fields;
+        while (my ($channel, $json) = splice(@pairs, 0, 2)) {
+            push @entries, decode_json($json);
+        }
+    }
+
+    # Normalize cursor to integer (Redis returns string '0' for done)
+    return ($next_cursor + 0, @entries);
+}
+
 # Delayed: send_delayed
 async sub send_delayed {
     my ($self, $channel, $message, $delay_seconds) = @_;
