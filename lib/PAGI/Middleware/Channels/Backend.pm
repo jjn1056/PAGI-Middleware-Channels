@@ -9,6 +9,8 @@ use Carp ();
 
 sub new {
     my ($class, %args) = @_;
+    Carp::croak("$class is abstract and cannot be instantiated directly")
+        if $class eq __PACKAGE__;
     return bless { %args }, $class;
 }
 
