@@ -1,30 +1,31 @@
 package PAGI::Middleware::Channels::Backend;
 use strict;
 use warnings;
-use Role::Tiny;
+use Carp ();
 
-# Core operations
-requires qw(
-    send
-    poll
-    subscribe
-    unsubscribe
-    publish
-    flush
-    cleanup
+# Abstract base class for channel-layer backends. Subclasses MUST
+# override every method below. Each default implementation croaks so
+# missing overrides surface immediately on first call.
+
+sub new {
+    my ($class, %args) = @_;
+    return bless { %args }, $class;
+}
+
+my @ABSTRACT = qw(
+    send poll subscribe unsubscribe publish flush cleanup
+    psubscribe punsubscribe track untrack list_presence
+    send_delayed publish_delayed subscribe_with_history
 );
 
-# Advanced features (v1)
-requires qw(
-    psubscribe
-    punsubscribe
-    track
-    untrack
-    list_presence
-    send_delayed
-    publish_delayed
-    subscribe_with_history
-);
+for my $method (@ABSTRACT) {
+    no strict 'refs';
+    *{__PACKAGE__ . "::$method"} = sub {
+        my $self = shift;
+        my $class = ref($self) || $self;
+        Carp::croak("$class must implement abstract method '$method'");
+    };
+}
 
 1;
 
@@ -32,7 +33,12 @@ __END__
 
 =head1 NAME
 
-PAGI::Middleware::Channels::Backend - Role for channel layer backends
+PAGI::Middleware::Channels::Backend - Abstract base class for channel layer backends
+
+=head1 DESCRIPTION
+
+Subclasses must override every method listed below. The default
+implementations croak; there is no shared behavior in this base class.
 
 =head1 REQUIRED METHODS
 
