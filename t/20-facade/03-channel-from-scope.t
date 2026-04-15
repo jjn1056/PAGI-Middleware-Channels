@@ -27,7 +27,7 @@ subtest 'from_scope returns PAGI::Channel inside a wrapped app' => sub {
     my $wrapped = $channels->wrap($inner_app);
     run { $wrapped->({ type => 'websocket' }, async sub { { type => 'websocket.disconnect' } }, async sub { }) };
 
-    isa_ok($got_ch, 'PAGI::Channel', 'from_scope returns a PAGI::Channel');
+    isa_ok($got_ch, 'PAGI::Channel');
     like($got_channel_name, qr/^conn\./, 'channel_name has conn. prefix');
 };
 

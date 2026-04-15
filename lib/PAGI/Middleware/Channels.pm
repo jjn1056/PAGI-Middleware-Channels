@@ -71,10 +71,10 @@ sub _generate_channel_name {
 sub _create_channel_interface {
     my ($self, $channel_name) = @_;
 
-    require PAGI::Channels;
+    require PAGI::Channel;
     $self->backend->set_channel_id($channel_name);
 
-    return PAGI::Channels->new(
+    return PAGI::Channel->new(
         backend      => $self->backend,
         channel_name => $channel_name,
     );
