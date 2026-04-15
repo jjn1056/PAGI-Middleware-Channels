@@ -84,6 +84,11 @@ async sub list_presence {
     return await $self->{backend}->list_presence($topic);
 }
 
+async sub count_presence {
+    my ($self, $topic) = @_;
+    return await $self->{backend}->count_presence($topic);
+}
+
 # Django Channels compatibility aliases
 *group_add     = \&subscribe;
 *group_discard = \&unsubscribe;

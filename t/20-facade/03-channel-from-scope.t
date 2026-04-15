@@ -68,4 +68,26 @@ subtest 'from_scope channel can subscribe and receive messages' => sub {
     is($received[0]{type}, 'ping', 'channel received message via from_scope handle');
 };
 
+subtest 'count_presence delegates to backend' => sub {
+    my $channels = PAGI::Middleware::Channels->new(
+        backend => PAGI::Middleware::Channels::Backend::Memory->new,
+    );
+
+    my $got_count;
+    my $inner_app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        my $ch = PAGI::Channel->from_scope($scope);
+
+        await $ch->subscribe('count.room', presence => { user => 'tester' });
+
+        $got_count = await $ch->count_presence('count.room');
+    };
+
+    my $wrapped = $channels->wrap($inner_app);
+    run { $wrapped->({ type => 'websocket' }, async sub { { type => 'websocket.disconnect' } }, async sub { }) };
+
+    is($got_count, 1, 'count_presence returns 1');
+};
+
 done_testing;
