@@ -6,10 +6,10 @@ use Test2::V0;
 
 my $loop = init_loop();
 
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
 subtest 'explicit track/untrack' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
     $backend->set_channel_id('worker.1');
 
     run { $backend->track('workers.pool', { worker_id => 1, started => 1000 }) };
@@ -25,7 +25,7 @@ subtest 'explicit track/untrack' => sub {
 };
 
 subtest 'subscribe with presence option' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
     $backend->set_channel_id('user.alice');
 
     run { $backend->subscribe('user.alice', 'chat.room1',
@@ -39,7 +39,7 @@ subtest 'subscribe with presence option' => sub {
 };
 
 subtest 'presence events on join/leave' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # Subscribe ch1 first (to receive events)
     $backend->set_channel_id('ch1');
@@ -63,7 +63,7 @@ subtest 'presence events on join/leave' => sub {
 };
 
 subtest 'list_presence returns all current' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     $backend->set_channel_id('u1');
     run { $backend->subscribe('u1', 'room', presence => { name => 'Alice' }) };

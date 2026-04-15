@@ -6,10 +6,10 @@ use Test2::V0;
 
 my $loop = init_loop();
 
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
 subtest 'single-level wildcard (*)' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # chat.* matches chat.room1, chat.general, NOT chat.room1.messages
     run { $backend->psubscribe('ch1', 'chat.*') };
@@ -25,7 +25,7 @@ subtest 'single-level wildcard (*)' => sub {
 };
 
 subtest 'multi-level wildcard (**)' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # notifications.** matches notifications, notifications.user, notifications.user.123
     run { $backend->psubscribe('ch1', 'notifications.**') };
@@ -42,7 +42,7 @@ subtest 'multi-level wildcard (**)' => sub {
 };
 
 subtest 'punsubscribe' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->psubscribe('ch1', 'events.*') };
     run { $backend->punsubscribe('ch1', 'events.*') };
@@ -52,7 +52,7 @@ subtest 'punsubscribe' => sub {
 };
 
 subtest 'mixed exact and pattern subscriptions' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # Exact subscription
     run { $backend->subscribe('ch1', 'room.vip') };

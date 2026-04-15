@@ -7,7 +7,7 @@ use Test2::V0;
 my $loop = init_loop();
 
 use PAGI::Channels;
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
 subtest 'new() requires a backend instance' => sub {
     like(
@@ -19,7 +19,7 @@ subtest 'new() requires a backend instance' => sub {
 
 subtest 'basic send/subscribe/publish flow' => sub {
     my $channels = PAGI::Channels->new(
-        backend => PAGI::Channels::Backend::Memory->new,
+        backend => PAGI::Middleware::Channels::Backend::Memory->new,
     );
 
     run { $channels->backend->subscribe('ch1', 'room') };
@@ -35,7 +35,7 @@ subtest 'basic send/subscribe/publish flow' => sub {
 };
 
 subtest 'backend accessor returns the passed instance' => sub {
-    my $memory = PAGI::Channels::Backend::Memory->new;
+    my $memory = PAGI::Middleware::Channels::Backend::Memory->new;
     my $channels = PAGI::Channels->new(backend => $memory);
     is($channels->backend, $memory, 'backend accessor returns exact instance');
 };

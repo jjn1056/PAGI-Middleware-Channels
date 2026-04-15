@@ -1,4 +1,4 @@
-package PAGI::Channels::Backend::Memory;
+package PAGI::Middleware::Channels::Backend::Memory;
 use strict;
 use warnings;
 use Future::AsyncAwait;
@@ -7,7 +7,7 @@ use Role::Tiny::With;
 use Time::HiRes ();
 use namespace::clean;
 
-with 'PAGI::Channels::Backend';
+with 'PAGI::Middleware::Channels::Backend';
 
 # Defaults
 use constant {
@@ -488,13 +488,13 @@ __END__
 
 =head1 NAME
 
-PAGI::Channels::Backend::Memory - In-memory channel backend for single-process use
+PAGI::Middleware::Channels::Backend::Memory - In-memory channel backend for single-process use
 
 =head1 SYNOPSIS
 
-    use PAGI::Channels::Backend::Memory;
+    use PAGI::Middleware::Channels::Backend::Memory;
 
-    my $backend = PAGI::Channels::Backend::Memory->new(
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(
         capacity => 100,    # Max messages per channel
         expiry   => 60,     # Message TTL in seconds
     );

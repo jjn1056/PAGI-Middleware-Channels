@@ -1,4 +1,4 @@
-package PAGI::Channels::Backend;
+package PAGI::Middleware::Channels::Backend;
 use strict;
 use warnings;
 use Role::Tiny;
@@ -32,7 +32,7 @@ __END__
 
 =head1 NAME
 
-PAGI::Channels::Backend - Role for channel layer backends
+PAGI::Middleware::Channels::Backend - Role for channel layer backends
 
 =head1 REQUIRED METHODS
 

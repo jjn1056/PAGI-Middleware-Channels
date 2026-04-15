@@ -6,10 +6,10 @@ use Test2::V0;
 
 my $loop = init_loop();
 
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
 subtest 'cleanup removes channel from all groups' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->subscribe('ch1', 'room1') };
     run { $backend->subscribe('ch1', 'room2') };
@@ -26,7 +26,7 @@ subtest 'cleanup removes channel from all groups' => sub {
 };
 
 subtest 'cleanup removes pending messages' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->send('ch1', { type => 'msg1' }) };
     run { $backend->send('ch1', { type => 'msg2' }) };
@@ -37,7 +37,7 @@ subtest 'cleanup removes pending messages' => sub {
 };
 
 subtest 'cleanup removes pattern subscriptions' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->psubscribe('ch1', 'events.*') };
     run { $backend->cleanup('ch1') };
@@ -47,7 +47,7 @@ subtest 'cleanup removes pattern subscriptions' => sub {
 };
 
 subtest 'cleanup removes presence and broadcasts leave' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # ch2 subscribes first to receive events
     $backend->set_channel_id('ch2');
@@ -75,7 +75,7 @@ subtest 'cleanup removes presence and broadcasts leave' => sub {
 };
 
 subtest 'flush clears everything' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new(history_size => 10);
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(history_size => 10);
 
     run { $backend->subscribe('ch1', 'room') };
     run { $backend->psubscribe('ch2', 'events.*') };
@@ -92,7 +92,7 @@ subtest 'flush clears everything' => sub {
 };
 
 subtest 'cleanup removes delayed messages' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new;
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new;
     $backend->set_channel_id('ch1');
 
     # Schedule delayed messages

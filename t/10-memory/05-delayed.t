@@ -6,10 +6,10 @@ use Test2::V0;
 
 my $loop = init_loop();
 
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
 subtest 'send_delayed delivers after delay' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # Send with 0.1 second delay
     run { $backend->send_delayed('ch1', { type => 'delayed' }, 0.1) };
@@ -33,7 +33,7 @@ subtest 'send_delayed delivers after delay' => sub {
 };
 
 subtest 'publish_delayed delivers to all subscribers after delay' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->subscribe('ch1', 'room') };
     run { $backend->subscribe('ch2', 'room') };
@@ -56,7 +56,7 @@ subtest 'publish_delayed delivers to all subscribers after delay' => sub {
 };
 
 subtest 'multiple delayed messages in order' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->send_delayed('ch', { type => 'msg', n => 1 }, 0.05) };
     run { $backend->send_delayed('ch', { type => 'msg', n => 2 }, 0.15) };
@@ -76,7 +76,7 @@ subtest 'multiple delayed messages in order' => sub {
 };
 
 subtest 'poll() delivers due delayed messages without manual pump' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->send_delayed('ch1', { type => 'reminder' }, 0.05) };
 

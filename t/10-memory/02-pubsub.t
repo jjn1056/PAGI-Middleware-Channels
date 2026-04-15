@@ -6,10 +6,10 @@ use Test2::V0;
 
 my $loop = init_loop();
 
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
 subtest 'subscribe and publish' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # Subscribe two channels to a topic
     run { $backend->subscribe('ch1', 'room.general') };
@@ -27,7 +27,7 @@ subtest 'subscribe and publish' => sub {
 };
 
 subtest 'publish with exclude' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->subscribe('ch1', 'room') };
     run { $backend->subscribe('ch2', 'room') };
@@ -42,7 +42,7 @@ subtest 'publish with exclude' => sub {
 };
 
 subtest 'publish to full channel drops silently' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new(capacity => 1);
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(capacity => 1);
 
     run { $backend->subscribe('ch1', 'room') };
 
@@ -59,7 +59,7 @@ subtest 'publish to full channel drops silently' => sub {
 };
 
 subtest 'unsubscribe' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->subscribe('ch1', 'room') };
     run { $backend->unsubscribe('ch1', 'room') };
@@ -69,7 +69,7 @@ subtest 'unsubscribe' => sub {
 };
 
 subtest 'subscribe is idempotent' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->subscribe('ch1', 'room') };
     run { $backend->subscribe('ch1', 'room') };  # duplicate

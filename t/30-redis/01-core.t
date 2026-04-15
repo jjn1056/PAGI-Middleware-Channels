@@ -10,8 +10,8 @@ my $loop = init_loop();
 SKIP: {
     skip_without_redis();
 
-    require PAGI::Channels::Backend::Redis;
-    ok(1, 'loaded PAGI::Channels::Backend::Redis');
+    require PAGI::Middleware::Channels::Backend::Redis;
+    ok(1, 'loaded PAGI::Middleware::Channels::Backend::Redis');
 
     subtest 'backend uses the passed Async::Redis instance' => sub {
         # Two backends with distinct prefixes — they must be isolated.
@@ -20,8 +20,8 @@ SKIP: {
         my $redis_a = make_redis(prefix => "test:A:$$:");
         my $redis_b = make_redis(prefix => "test:B:$$:");
 
-        my $backend_a = PAGI::Channels::Backend::Redis->new(redis => $redis_a);
-        my $backend_b = PAGI::Channels::Backend::Redis->new(redis => $redis_b);
+        my $backend_a = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis_a);
+        my $backend_b = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis_b);
 
         run { $backend_a->flush() };
         run { $backend_b->flush() };
@@ -39,7 +39,7 @@ SKIP: {
     };
 
     subtest 'send and poll' => sub {
-        my $backend = PAGI::Channels::Backend::Redis->new(
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
             redis => make_redis(),
         );
         run { $backend->flush() };
@@ -57,7 +57,7 @@ SKIP: {
     };
 
     subtest 'FIFO ordering' => sub {
-        my $backend = PAGI::Channels::Backend::Redis->new(
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
             redis => make_redis(),
         );
         run { $backend->flush() };

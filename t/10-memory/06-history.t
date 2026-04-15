@@ -6,10 +6,10 @@ use Test2::V0;
 
 my $loop = init_loop();
 
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
 subtest 'subscribe_with_history receives last N messages' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new(history_size => 10);
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(history_size => 10);
 
     # Publish some messages first (no subscribers yet)
     run { $backend->publish('chat.room', { type => 'msg', n => 1 }) };
@@ -27,7 +27,7 @@ subtest 'subscribe_with_history receives last N messages' => sub {
 };
 
 subtest 'history respects count limit' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new(history_size => 100);
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(history_size => 100);
 
     for my $n (1..10) {
         run { $backend->publish('room', { type => 'msg', n => $n }) };
@@ -43,7 +43,7 @@ subtest 'history respects count limit' => sub {
 };
 
 subtest 'history buffer respects global limit' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new(history_size => 5);
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(history_size => 5);
 
     for my $n (1..10) {
         run { $backend->publish('room', { type => 'msg', n => $n }) };
@@ -61,7 +61,7 @@ subtest 'history buffer respects global limit' => sub {
 };
 
 subtest 'new messages after subscribe arrive normally' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new(history_size => 10);
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(history_size => 10);
 
     run { $backend->publish('room', { type => 'history', n => 1 }) };
     run { $backend->subscribe_with_history('ch1', 'room', 10) };

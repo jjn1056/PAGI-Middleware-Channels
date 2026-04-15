@@ -6,10 +6,10 @@ use Test2::V0;
 
 my $loop = init_loop();
 
-ok(lives { require PAGI::Channels::Backend::Memory }, 'require Memory backend') or diag($@);
+ok(lives { require PAGI::Middleware::Channels::Backend::Memory }, 'require Memory backend') or diag($@);
 
 subtest 'send and poll' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     # Initially empty
     my $msg = run { $backend->poll('test.channel') };
@@ -28,7 +28,7 @@ subtest 'send and poll' => sub {
 };
 
 subtest 'FIFO ordering' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new();
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
 
     run { $backend->send('ch', { type => 'msg', n => 1 }) };
     run { $backend->send('ch', { type => 'msg', n => 2 }) };
@@ -41,7 +41,7 @@ subtest 'FIFO ordering' => sub {
 };
 
 subtest 'capacity limit' => sub {
-    my $backend = PAGI::Channels::Backend::Memory->new(capacity => 3);
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(capacity => 3);
 
     run { $backend->send('ch', { type => 'msg', n => 1 }) };
     run { $backend->send('ch', { type => 'msg', n => 2 }) };

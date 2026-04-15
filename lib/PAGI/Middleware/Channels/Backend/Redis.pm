@@ -1,5 +1,5 @@
-# lib/PAGI/Channels/Backend/Redis.pm
-package PAGI::Channels::Backend::Redis;
+# lib/PAGI/Middleware/Channels/Backend/Redis.pm
+package PAGI::Middleware::Channels::Backend::Redis;
 use strict;
 use warnings;
 use Future::AsyncAwait;
@@ -9,7 +9,7 @@ use JSON::MaybeXS qw(encode_json decode_json);
 use Time::HiRes ();
 use namespace::clean;
 
-with 'PAGI::Channels::Backend';
+with 'PAGI::Middleware::Channels::Backend';
 
 # Defaults
 use constant {
@@ -24,7 +24,7 @@ sub new {
     my ($class, %args) = @_;
 
     my $redis = $args{redis}
-        or die "PAGI::Channels::Backend::Redis: 'redis' argument required "
+        or die "PAGI::Middleware::Channels::Backend::Redis: 'redis' argument required "
              . "(Async::Redis instance or compatible)";
 
     return bless {
@@ -479,12 +479,12 @@ __END__
 
 =head1 NAME
 
-PAGI::Channels::Backend::Redis - Redis-backed channel backend for multi-process use
+PAGI::Middleware::Channels::Backend::Redis - Redis-backed channel backend for multi-process use
 
 =head1 SYNOPSIS
 
     use Async::Redis;
-    use PAGI::Channels::Backend::Redis;
+    use PAGI::Middleware::Channels::Backend::Redis;
 
     my $redis = Async::Redis->new(
         uri       => 'redis://localhost:6379',
@@ -493,7 +493,7 @@ PAGI::Channels::Backend::Redis - Redis-backed channel backend for multi-process 
     );
     $redis->connect->get;
 
-    my $backend = PAGI::Channels::Backend::Redis->new(
+    my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
         redis    => $redis,
         capacity => 100,
     );

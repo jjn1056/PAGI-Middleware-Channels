@@ -10,11 +10,11 @@ my $loop = init_loop();
 SKIP: {
     skip_without_redis();
 
-    require PAGI::Channels::Backend::Redis;
+    require PAGI::Middleware::Channels::Backend::Redis;
 
     my $make_backend = sub {
         my %opts = @_;
-        my $backend = PAGI::Channels::Backend::Redis->new(
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
             redis        => make_redis(),
             history_size => $opts{history_size} // 10,
         );
