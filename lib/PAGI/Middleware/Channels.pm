@@ -119,7 +119,7 @@ PAGI::Middleware::Channels - Cross-process messaging middleware for PAGI applica
         my ($scope, $receive, $send) = @_;
 
         my $ch = PAGI::Channel->from_scope($scope);
-        my $my_channel = $scope->{'pagi.channel'};
+        my $my_channel = $ch->channel_name;
 
         await $ch->subscribe("chat.room1",
             presence => { user => 'alice', status => 'online' }
