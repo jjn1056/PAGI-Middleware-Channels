@@ -104,4 +104,33 @@ subtest 'count_presence returns number of non-expired entries' => sub {
     is($count, 1, 'one user after unsubscribe');
 };
 
+subtest 'list_presence with limit — under limit succeeds' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+
+    $backend->set_channel_id('u1');
+    run { $backend->subscribe('u1', 'lim.room', presence => { n => 1 }) };
+    $backend->set_channel_id('u2');
+    run { $backend->subscribe('u2', 'lim.room', presence => { n => 2 }) };
+
+    my @presence = run { $backend->list_presence('lim.room', limit => 5) };
+    is(scalar @presence, 2, 'returns 2 entries when under limit of 5');
+};
+
+subtest 'list_presence with limit — over limit croaks' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+
+    $backend->set_channel_id('u1');
+    run { $backend->subscribe('u1', 'big.room', presence => { n => 1 }) };
+    $backend->set_channel_id('u2');
+    run { $backend->subscribe('u2', 'big.room', presence => { n => 2 }) };
+    $backend->set_channel_id('u3');
+    run { $backend->subscribe('u3', 'big.room', presence => { n => 3 }) };
+
+    my $err = dies {
+        run { $backend->list_presence('big.room', limit => 2) };
+    };
+    like($err, qr/exceeds limit/, 'croaks with helpful message');
+    like($err, qr/scan_presence/, 'message mentions scan_presence');
+};
+
 done_testing;

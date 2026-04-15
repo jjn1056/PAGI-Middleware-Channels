@@ -5,6 +5,7 @@ use parent 'PAGI::Middleware::Channels::Backend';
 use Future::AsyncAwait;
 use Future;
 use Time::HiRes ();
+use Carp ();
 use namespace::clean;
 
 # Defaults
@@ -374,7 +375,8 @@ async sub untrack {
 
 # Presence: list_presence
 async sub list_presence {
-    my ($self, $topic) = @_;
+    my ($self, $topic, %opts) = @_;
+    my $limit = $opts{limit};
 
     my $entries = $self->{presence}{$topic} // {};
     my $now = time();
@@ -384,6 +386,14 @@ async sub list_presence {
         my $entry = $entries->{$channel};
         next if $entry->{expires} < $now;
         push @result, $entry->{data};
+    }
+
+    if (defined $limit && @result > $limit) {
+        Carp::croak(
+            "list_presence: topic '$topic' has " . scalar(@result) . " members,"
+            . " which exceeds limit $limit."
+            . " Use count_presence() for counts or scan_presence() for paginated access."
+        );
     }
 
     return @result;

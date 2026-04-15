@@ -80,8 +80,8 @@ async sub untrack {
 }
 
 async sub list_presence {
-    my ($self, $topic) = @_;
-    return await $self->{backend}->list_presence($topic);
+    my ($self, $topic, %opts) = @_;
+    return await $self->{backend}->list_presence($topic, %opts);
 }
 
 async sub count_presence {
