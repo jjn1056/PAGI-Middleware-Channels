@@ -1,26 +1,25 @@
 package PAGI::Middleware::Channels;
 use strict;
 use warnings;
+use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Future;
 use Future::IO;
 
 our $VERSION = '0.001';
 
-sub new {
-    my ($class, %args) = @_;
+# Parent's new() stores all args in $self->{config} and calls _init().
+sub _init {
+    my ($self, $config) = @_;
 
-    my $backend = $args{backend}
+    $config->{backend}
         or die "PAGI::Middleware::Channels: 'backend' argument required "
              . "(a PAGI::Middleware::Channels::Backend instance)";
 
-    return bless {
-        _backend => $backend,
-        _counter => 0,
-    }, $class;
+    $self->{_counter} = 0;
 }
 
-sub backend { shift->{_backend} }
+sub backend { $_[0]->{config}{backend} }
 
 sub wrap {
     my ($self, $inner_app) = @_;
@@ -30,11 +29,13 @@ sub wrap {
 
         my $channel_name = $self->_generate_channel_name();
 
-        $scope->{'pagi.channels'} = $self->_create_channel_interface($channel_name);
-        $scope->{'pagi.channel'}  = $channel_name;
+        my $new_scope = $self->modify_scope($scope, {
+            'pagi.channels' => $self->_create_channel_interface($channel_name),
+            'pagi.channel'  => $channel_name,
+        });
 
         my $wrapped_receive = async sub {
-            if (my $msg = await $self->{_backend}->poll($channel_name)) {
+            if (my $msg = await $self->backend->poll($channel_name)) {
                 return $msg;
             }
 
@@ -43,7 +44,7 @@ sub wrap {
             while (!$protocol_f->is_ready) {
                 await Future::IO->sleep(0.1);
 
-                if (my $msg = await $self->{_backend}->poll($channel_name)) {
+                if (my $msg = await $self->backend->poll($channel_name)) {
                     return $msg;
                 }
             }
@@ -52,10 +53,10 @@ sub wrap {
         };
 
         my $err;
-        eval { await $inner_app->($scope, $wrapped_receive, $send) };
+        eval { await $inner_app->($new_scope, $wrapped_receive, $send) };
         $err = $@;
 
-        await $self->{_backend}->cleanup($channel_name);
+        await $self->backend->cleanup($channel_name);
 
         die $err if $err;
     };
@@ -71,10 +72,10 @@ sub _create_channel_interface {
     my ($self, $channel_name) = @_;
 
     require PAGI::Channels;
-    $self->{_backend}->set_channel_id($channel_name);
+    $self->backend->set_channel_id($channel_name);
 
     return PAGI::Channels->new(
-        backend      => $self->{_backend},
+        backend      => $self->backend,
         channel_name => $channel_name,
     );
 }
@@ -162,10 +163,11 @@ Future::IO interface.
         backend => $backend_instance,
     );
 
-The C<backend> argument is B<required> and must be a
-L<PAGI::Middleware::Channels::Backend> instance (e.g.,
-L<PAGI::Middleware::Channels::Backend::Memory> or
-L<PAGI::Middleware::Channels::Backend::Redis>).
+Inherited from L<PAGI::Middleware>. The C<backend> argument is
+B<required> and must be a L<PAGI::Middleware::Channels::Backend>
+instance (e.g., L<PAGI::Middleware::Channels::Backend::Memory> or
+L<PAGI::Middleware::Channels::Backend::Redis>). Required-argument
+validation runs in C<_init>; missing C<backend> dies.
 
 This module does no backend construction of its own — callers wire
 up the backend (and, for Redis, the underlying L<Async::Redis>
@@ -210,6 +212,24 @@ Single-process, in-memory. Good for development and testing.
 Multi-process, multi-server. Takes a caller-owned L<Async::Redis>
 instance; this distribution itself has no runtime dependency on any
 Redis client — any object that ducks the Async::Redis interface works.
+
+=head1 INHERITANCE
+
+Inherits from L<PAGI::Middleware>. The parent class provides:
+
+=over 4
+
+=item * Standard C<new(%config)> constructor that stores config at
+C<< $self->{config} >> and calls C<_init>.
+
+=item * C<modify_scope($scope, \%additions)> — non-mutating scope
+augmentation (used by C<wrap()> to inject C<pagi.channels> and
+C<pagi.channel> without side-effecting the caller's scope hashref).
+
+=item * C<intercept_send>, C<buffer_request_body>, C<call> — not
+currently used by Channels but available for future extension.
+
+=back
 
 =head1 SEE ALSO
 
