@@ -383,6 +383,14 @@ async sub list_presence {
     return @result;
 }
 
+# Presence: count_presence
+async sub count_presence {
+    my ($self, $topic) = @_;
+
+    my $key = $self->_presence_key($topic);
+    return await $self->{_redis}->hlen($key);
+}
+
 # Delayed: send_delayed
 async sub send_delayed {
     my ($self, $channel, $message, $delay_seconds) = @_;

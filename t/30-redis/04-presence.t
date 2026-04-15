@@ -124,6 +124,30 @@ SKIP: {
         is(scalar @presence, 1, 'only ch1 presence remains');
 
     };
+
+    subtest 'count_presence returns zero for unknown topic' => sub {
+        my $backend = $make_backend->();
+
+        my $count = run { $backend->count_presence('no.such.topic') };
+        is($count, 0, 'zero for unknown topic');
+    };
+
+    subtest 'count_presence returns number of subscribed members' => sub {
+        my $backend = $make_backend->();
+
+        $backend->set_channel_id('u1');
+        run { $backend->subscribe('u1', 'redis.room', presence => { name => 'Alice' }) };
+
+        $backend->set_channel_id('u2');
+        run { $backend->subscribe('u2', 'redis.room', presence => { name => 'Bob' }) };
+
+        my $count = run { $backend->count_presence('redis.room') };
+        is($count, 2, 'two present');
+
+        run { $backend->unsubscribe('u2', 'redis.room') };
+        $count = run { $backend->count_presence('redis.room') };
+        is($count, 1, 'one after unsubscribe');
+    };
 }
 
 done_testing;
