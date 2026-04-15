@@ -88,7 +88,7 @@ my $channels = PAGI::Middleware::Channels->new(
 
 See the `examples/` directory:
 
-- `chat-with-workers/` - Chat app with worker pool and presence
+- `chat/` - Chat app with worker pool and presence
 - `task-queue/` - Task queue with real-time progress updates
 
 ## Documentation
