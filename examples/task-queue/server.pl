@@ -18,8 +18,8 @@ use Future::IO;
 use JSON::MaybeXS qw(encode_json decode_json);
 
 use lib 'lib';
-use PAGI::Channels;
-use PAGI::Channels::Backend::Redis;
+use PAGI::Middleware::Channels;
+use PAGI::Middleware::Channels::Backend::Redis;
 use Async::Redis;
 
 # Standalone tool - create our own event loop
@@ -33,8 +33,8 @@ my $redis = Async::Redis->new(
 );
 $redis->connect->get;
 
-my $channels = PAGI::Channels->new(
-    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
+my $channels = PAGI::Middleware::Channels->new(
+    backend => PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis),
 );
 
 my $task_counter = 0;

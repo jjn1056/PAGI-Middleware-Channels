@@ -15,8 +15,8 @@ use JSON::MaybeXS qw(decode_json);
 use File::Basename qw(dirname);
 use File::Spec;
 
-use PAGI::Channels;
-use PAGI::Channels::Backend::Redis;
+use PAGI::Middleware::Channels;
+use PAGI::Middleware::Channels::Backend::Redis;
 use PAGI::WebSocket;
 use PAGI::App::Router;
 use PAGI::App::File;
@@ -30,8 +30,8 @@ my $redis = Async::Redis->new(
 # Connection happens in the lifespan.startup hook below,
 # so the loop is running when we wait for it.
 
-my $channels = PAGI::Channels->new(
-    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
+my $channels = PAGI::Middleware::Channels->new(
+    backend => PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis),
 );
 
 # WebSocket chat handler
