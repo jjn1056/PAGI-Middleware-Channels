@@ -8,6 +8,10 @@ requires 'Role::Tiny', '2.002004';
 requires 'JSON::MaybeXS', '1.004005';
 requires 'namespace::clean';
 
+# Middleware base class (currently ships in the PAGI distribution;
+# intent is for PAGI to be split into smaller pieces over time).
+requires 'PAGI::Middleware';
+
 # Optional serializer for higher throughput (not yet wired)
 recommends 'Sereal::Encoder', '5.004';
 recommends 'Sereal::Decoder', '5.004';
