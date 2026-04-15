@@ -409,6 +409,35 @@ async sub count_presence {
     return scalar grep { $entries->{$_}{expires} >= $now } keys %$entries;
 }
 
+# Presence: scan_presence (cursor-based pagination)
+# cursor => 0 to start; returns 0 when iteration complete.
+# NOTE: cursor is a numeric offset into a sorted list. If entries are
+# added/removed between calls, pages may overlap or skip — same guarantee
+# as Redis SCAN.
+async sub scan_presence {
+    my ($self, $topic, %opts) = @_;
+    my $cursor = $opts{cursor} // 0;
+    my $count  = $opts{count}  // 100;
+
+    my $entries = $self->{presence}{$topic} // {};
+    my $now = time();
+
+    my @all = sort grep { $entries->{$_}{expires} >= $now } keys %$entries;
+    my $total = scalar @all;
+
+    return (0) if $total == 0;
+
+    my $end = $cursor + $count;
+    $end = $total if $end > $total;
+
+    my @page = @all[$cursor .. $end - 1];
+    my @result = map { $entries->{$_}{data} } @page;
+
+    my $next_cursor = ($cursor + $count < $total) ? $cursor + $count : 0;
+
+    return ($next_cursor, @result);
+}
+
 # Delayed: send_delayed
 async sub send_delayed {
     my ($self, $channel, $message, $delay_seconds) = @_;

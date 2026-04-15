@@ -133,4 +133,43 @@ subtest 'list_presence with limit — over limit croaks' => sub {
     like($err, qr/scan_presence/, 'message mentions scan_presence');
 };
 
+subtest 'scan_presence with cursor 0 returns all entries for small set' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+
+    for my $i (1..3) {
+        $backend->set_channel_id("u$i");
+        run { $backend->subscribe("u$i", 'scan.room', presence => { n => $i }) };
+    }
+
+    my ($cursor, @entries) = run { $backend->scan_presence('scan.room', cursor => 0, count => 10) };
+    is($cursor, 0, 'cursor 0 means done');
+    is(scalar @entries, 3, 'all 3 entries returned');
+};
+
+subtest 'scan_presence paginates correctly' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+
+    for my $i (1..5) {
+        $backend->set_channel_id("u$i");
+        run { $backend->subscribe("u$i", 'page.room', presence => { n => $i }) };
+    }
+
+    my @all;
+    my $cursor = 0;
+    do {
+        my @batch;
+        ($cursor, @batch) = run { $backend->scan_presence('page.room', cursor => $cursor, count => 2) };
+        push @all, @batch;
+    } while ($cursor);
+
+    is(scalar @all, 5, 'collected all 5 entries across pages');
+};
+
+subtest 'scan_presence on empty topic returns empty' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+    my ($cursor, @entries) = run { $backend->scan_presence('empty.room', cursor => 0, count => 10) };
+    is($cursor, 0, 'cursor 0');
+    is(scalar @entries, 0, 'no entries');
+};
+
 done_testing;
