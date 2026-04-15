@@ -7,6 +7,7 @@ use Future::AsyncAwait;
 use Future;
 use JSON::MaybeXS qw(encode_json decode_json);
 use Time::HiRes ();
+use Carp ();
 use namespace::clean;
 
 # Defaults
@@ -359,9 +360,22 @@ async sub untrack {
 
 # Presence: list_presence
 async sub list_presence {
-    my ($self, $topic) = @_;
+    my ($self, $topic, %opts) = @_;
+    my $limit = $opts{limit};
 
     my $key = $self->_presence_key($topic);
+
+    if (defined $limit) {
+        my $count = await $self->{_redis}->hlen($key);
+        if ($count > $limit) {
+            Carp::croak(
+                "list_presence: topic '$topic' has $count members,"
+                . " which exceeds limit $limit."
+                . " Use count_presence() for counts or scan_presence() for paginated access."
+            );
+        }
+    }
+
     my $data_ref = await $self->{_redis}->hgetall($key);
 
     # hgetall may return hashref { k => v } or arrayref [k, v, ...] depending on Redis lib version
