@@ -26,7 +26,7 @@ Override the Redis URI with `PAGI_REDIS_URI=redis://host:port` if your
 Redis isn't on `localhost:6379`.
 
 **Browser: Open the chat**
-- Open http://localhost:8000
+- Open http://localhost:5000
 - Enter a username and join
 - Open multiple browser tabs with different usernames
 - Chat messages and presence updates flow between all clients

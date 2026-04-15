@@ -39,10 +39,11 @@ prove -l t/20-facade/
 - `examples/` - Can use any loop (examples show IO::Async)
 
 **Core Modules:**
-- `PAGI::Channels` - Facade and wrap() middleware
-- `PAGI::Channels::Backend` - Role defining backend interface
-- `PAGI::Channels::Backend::Memory` - In-memory (single process)
-- `PAGI::Channels::Backend::Redis` - Redis (multi-process)
+- `PAGI::Middleware::Channels` - Middleware factory with `wrap()`
+- `PAGI::Channels` - Per-connection helper (injected into `$scope->{'pagi.channels'}`)
+- `PAGI::Middleware::Channels::Backend` - Role defining backend interface
+- `PAGI::Middleware::Channels::Backend::Memory` - In-memory (single process)
+- `PAGI::Middleware::Channels::Backend::Redis` - Redis (multi-process); takes a caller-owned `Async::Redis` instance
 
 **Advanced Features (v1):**
 - Presence tracking (subscribe with presence option)
