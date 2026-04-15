@@ -11,10 +11,6 @@ requires 'namespace::clean';
 # intent is for PAGI to be split into smaller pieces over time).
 requires 'PAGI::Middleware';
 
-# Optional serializer for higher throughput (not yet wired)
-recommends 'Sereal::Encoder', '5.004';
-recommends 'Sereal::Decoder', '5.004';
-
 # Testing
 on 'test' => sub {
     requires 'Test2::V0';
