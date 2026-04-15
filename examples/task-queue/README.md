@@ -14,12 +14,12 @@ cd t && docker compose up -d && cd ..
 
 2. Start a worker:
 ```bash
-PAGI_CHANNELS_BACKEND=redis://localhost:6379 perl examples/task-queue/server.pl worker
+perl examples/task-queue/server.pl worker
 ```
 
 3. In another terminal, run the demo:
 ```bash
-PAGI_CHANNELS_BACKEND=redis://localhost:6379 perl examples/task-queue/server.pl demo
+perl examples/task-queue/server.pl demo
 ```
 
 ## Features Demonstrated
