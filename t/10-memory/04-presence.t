@@ -81,4 +81,27 @@ subtest 'list_presence returns all current' => sub {
     is(\@names, ['Alice', 'Bob', 'Carol'], 'correct names');
 };
 
+subtest 'count_presence returns zero for unknown topic' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+    my $count = run { $backend->count_presence('no.such.topic') };
+    is($count, 0, 'zero for unknown topic');
+};
+
+subtest 'count_presence returns number of non-expired entries' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+
+    $backend->set_channel_id('u1');
+    run { $backend->subscribe('u1', 'room', presence => { name => 'Alice' }) };
+
+    $backend->set_channel_id('u2');
+    run { $backend->subscribe('u2', 'room', presence => { name => 'Bob' }) };
+
+    my $count = run { $backend->count_presence('room') };
+    is($count, 2, 'two users present');
+
+    run { $backend->unsubscribe('u2', 'room') };
+    $count = run { $backend->count_presence('room') };
+    is($count, 1, 'one user after unsubscribe');
+};
+
 done_testing;

@@ -388,6 +388,17 @@ async sub list_presence {
 
     return @result;
 }
+
+# Presence: count_presence
+async sub count_presence {
+    my ($self, $topic) = @_;
+
+    my $entries = $self->{presence}{$topic} // {};
+    my $now = time();
+
+    return scalar grep { $entries->{$_}{expires} >= $now } keys %$entries;
+}
+
 # Delayed: send_delayed
 async sub send_delayed {
     my ($self, $channel, $message, $delay_seconds) = @_;

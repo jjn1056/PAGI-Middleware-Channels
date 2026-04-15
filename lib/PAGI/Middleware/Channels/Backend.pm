@@ -17,6 +17,7 @@ sub new {
 my @ABSTRACT = qw(
     send poll subscribe unsubscribe publish flush cleanup
     psubscribe punsubscribe track untrack list_presence
+    count_presence scan_presence
     send_delayed publish_delayed subscribe_with_history
 );
 
@@ -83,6 +84,10 @@ implementations croak; there is no shared behavior in this base class.
 =item untrack($topic) -> Future
 
 =item list_presence($topic) -> Future[@presences]
+
+=item count_presence($topic) -> Future($count)
+
+=item scan_presence($topic, cursor => $cursor, count => $n) -> Future($next_cursor, @presences)
 
 =back
 
