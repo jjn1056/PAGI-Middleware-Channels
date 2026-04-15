@@ -108,4 +108,27 @@ subtest 'cleanup on app exit' => sub {
     is(run { $channels->backend->poll($my_channel) }, undef, 'channel cleaned up');
 };
 
+subtest 'wrap does not mutate the outer scope' => sub {
+    my $channels = PAGI::Middleware::Channels->new(
+        backend => PAGI::Middleware::Channels::Backend::Memory->new,
+    );
+
+    my $original_scope = { type => 'websocket', path => '/test' };
+    my @original_keys  = sort keys %$original_scope;
+
+    my $inner_app = async sub { };
+
+    my $wrapped = $channels->wrap($inner_app);
+
+    my $receive = async sub { { type => 'websocket.disconnect' } };
+    my $send    = async sub { };
+
+    run { $wrapped->($original_scope, $receive, $send) };
+
+    my @keys_after = sort keys %$original_scope;
+    is(\@keys_after, \@original_keys, 'outer scope keys unchanged');
+    ok(!exists $original_scope->{'pagi.channels'}, 'pagi.channels not leaked into outer scope');
+    ok(!exists $original_scope->{'pagi.channel'},  'pagi.channel not leaked into outer scope');
+};
+
 done_testing;
