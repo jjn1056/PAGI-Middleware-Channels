@@ -19,7 +19,7 @@ on 'test' => sub {
     requires 'IO::Async', '0.802';
     requires 'Future::IO::Impl::IOAsync', '0.805';
     # Async::Redis is used by the Redis-backend test files to construct
-    # an instance to pass into the backend. PAGI::Channels itself has
+    # an instance to pass into the backend. PAGI-Middleware-Channels itself has
     # no runtime dependency on Async::Redis — users bring their own
     # client at call-site.
     recommends 'Async::Redis', '0.001005';
