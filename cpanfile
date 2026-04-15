@@ -4,7 +4,6 @@
 requires 'perl', '5.018';
 requires 'Future::AsyncAwait', '0.66';
 requires 'Future::IO', '0.15';
-requires 'Role::Tiny', '2.002004';
 requires 'JSON::MaybeXS', '1.004005';
 requires 'namespace::clean';
 
