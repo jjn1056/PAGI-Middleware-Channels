@@ -16,6 +16,7 @@ use File::Basename qw(dirname);
 use File::Spec;
 
 use PAGI::Middleware::Channels;
+use PAGI::Channel;
 use PAGI::Middleware::Channels::Backend::Redis;
 use PAGI::WebSocket;
 use PAGI::App::Router;
@@ -39,8 +40,8 @@ async sub handle_websocket {
     my ($scope, $receive, $send) = @_;
 
     my $ws = PAGI::WebSocket->new($scope, $receive, $send);
-    my $ch = $scope->{'pagi.channels'};
-    my $my_channel = $scope->{'pagi.channel'};
+    my $ch = PAGI::Channel->from_scope($scope);
+    my $my_channel = $ch->channel_name;
 
     # Room from path param, username from query string
     my $room = $ws->path_param('room') // 'general';
