@@ -53,7 +53,7 @@ prove -l t/20-facade/
 
 ## Dependencies
 
-Core: Future::AsyncAwait, Future::IO, Role::Tiny, JSON::MaybeXS, PAGI::Middleware
+Core: Future::AsyncAwait, Future::IO, JSON::MaybeXS, PAGI::Middleware
 Redis: Async::Redis
 Test: Test2::V0, IO::Async
 

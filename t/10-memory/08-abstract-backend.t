@@ -25,4 +25,10 @@ for my $m (@methods) {
         "$m croaks as abstract on bare subclass";
 }
 
+# Direct instantiation of the abstract base must also croak
+like
+    dies { PAGI::Middleware::Channels::Backend->new() },
+    qr/abstract/i,
+    "cannot instantiate abstract base class directly";
+
 done_testing;
