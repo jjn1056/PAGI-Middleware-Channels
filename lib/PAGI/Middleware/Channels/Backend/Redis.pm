@@ -2,14 +2,12 @@
 package PAGI::Middleware::Channels::Backend::Redis;
 use strict;
 use warnings;
+use parent 'PAGI::Middleware::Channels::Backend';
 use Future::AsyncAwait;
 use Future;
-use Role::Tiny::With;
 use JSON::MaybeXS qw(encode_json decode_json);
 use Time::HiRes ();
 use namespace::clean;
-
-with 'PAGI::Middleware::Channels::Backend';
 
 # Defaults
 use constant {
