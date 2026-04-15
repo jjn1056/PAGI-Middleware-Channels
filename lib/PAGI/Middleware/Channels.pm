@@ -71,10 +71,10 @@ sub _generate_channel_name {
 sub _create_channel_interface {
     my ($self, $channel_name) = @_;
 
-    require PAGI::Channels;
+    require PAGI::Channel;
     $self->backend->set_channel_id($channel_name);
 
-    return PAGI::Channels->new(
+    return PAGI::Channel->new(
         backend      => $self->backend,
         channel_name => $channel_name,
     );
@@ -118,8 +118,8 @@ PAGI::Middleware::Channels - Cross-process messaging middleware for PAGI applica
     my $app = $channels->wrap(async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = $scope->{'pagi.channels'};   # PAGI::Channels instance
-        my $my_channel = $scope->{'pagi.channel'};
+        my $ch = PAGI::Channel->from_scope($scope);
+        my $my_channel = $ch->channel_name;
 
         await $ch->subscribe("chat.room1",
             presence => { user => 'alice', status => 'online' }
@@ -139,7 +139,7 @@ The middleware wraps your PAGI app and injects two scope keys:
 
 =over 4
 
-=item * C<< $scope->{'pagi.channels'} >> — a L<PAGI::Channels> helper for this connection.
+=item * C<< $scope->{'pagi.channels'} >> — a L<PAGI::Channel> handle for this connection. Use C<< PAGI::Channel->from_scope($scope) >> to retrieve it.
 
 =item * C<< $scope->{'pagi.channel'} >> — this connection's unique channel name.
 
@@ -185,7 +185,7 @@ Wraps a PAGI application, returning a new app that:
 =item * Generates a unique channel name per request and injects
 C<< $scope->{'pagi.channel'} >>.
 
-=item * Constructs a L<PAGI::Channels> helper bound to that channel and
+=item * Constructs a L<PAGI::Channel> handle bound to that channel and
 the configured backend, and injects it as C<< $scope->{'pagi.channels'} >>.
 
 =item * Wraps C<$receive> so channel messages are interleaved with
@@ -233,7 +233,7 @@ currently used by Channels but available for future extension.
 
 =head1 SEE ALSO
 
-L<PAGI::Channels>, L<Async::Redis>, L<Future::IO>, L<Future::AsyncAwait>
+L<PAGI::Channel>, L<Async::Redis>, L<Future::IO>, L<Future::AsyncAwait>
 
 =head1 AUTHOR
 

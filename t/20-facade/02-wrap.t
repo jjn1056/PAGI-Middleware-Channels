@@ -10,6 +10,7 @@ my $loop = init_loop();
 use PAGI::Middleware::Channels;
 use PAGI::Middleware::Channels::Backend::Memory;
 use Future::AsyncAwait;
+use PAGI::Channel;
 
 subtest 'wrap injects scope keys' => sub {
     my $channels = PAGI::Middleware::Channels->new(
@@ -45,8 +46,8 @@ subtest 'wrapped receive interleaves channel messages' => sub {
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = $scope->{'pagi.channels'};
-        my $my_channel = $scope->{'pagi.channel'};
+        my $ch = PAGI::Channel->from_scope($scope);
+        my $my_channel = $ch->channel_name;
 
         # Subscribe to a room
         await $ch->subscribe('room');
@@ -87,8 +88,8 @@ subtest 'cleanup on app exit' => sub {
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = $scope->{'pagi.channels'};
-        $my_channel = $scope->{'pagi.channel'};
+        my $ch = PAGI::Channel->from_scope($scope);
+        $my_channel = $ch->channel_name;
 
         await $ch->subscribe('room');
         # App exits
