@@ -1,6 +1,6 @@
-# PAGI-Channels
+# PAGI-Middleware-Channels
 
-Cross-process messaging for PAGI applications. Exceeds Django Channels.
+Cross-process messaging middleware for PAGI applications. Exceeds Django Channels.
 
 ## Features
 
@@ -13,14 +13,14 @@ Cross-process messaging for PAGI applications. Exceeds Django Channels.
 ## Installation
 
 ```bash
-cpanm PAGI::Channels
+cpanm PAGI::Middleware::Channels
 ```
 
 ## Quick Start
 
 ```perl
-use PAGI::Channels;
-use PAGI::Channels::Backend::Redis;
+use PAGI::Middleware::Channels;
+use PAGI::Middleware::Channels::Backend::Redis;
 use Async::Redis;
 
 my $redis = Async::Redis->new(
@@ -30,8 +30,8 @@ my $redis = Async::Redis->new(
 );
 $redis->connect->get;
 
-my $channels = PAGI::Channels->new(
-    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
+my $channels = PAGI::Middleware::Channels->new(
+    backend => PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis),
 );
 
 my $app = $channels->wrap(async sub {
@@ -52,24 +52,24 @@ my $app = $channels->wrap(async sub {
 
 ## Backends
 
-### Memory — `PAGI::Channels::Backend::Memory`
+### Memory — `PAGI::Middleware::Channels::Backend::Memory`
 
 Single-process, in-memory. Perfect for development and testing.
 
 ```perl
-use PAGI::Channels::Backend::Memory;
+use PAGI::Middleware::Channels::Backend::Memory;
 
-my $channels = PAGI::Channels->new(
-    backend => PAGI::Channels::Backend::Memory->new,
+my $channels = PAGI::Middleware::Channels->new(
+    backend => PAGI::Middleware::Channels::Backend::Memory->new,
 );
 ```
 
-### Redis — `PAGI::Channels::Backend::Redis`
+### Redis — `PAGI::Middleware::Channels::Backend::Redis`
 
-Multi-process, multi-server. Takes any client ducking the [Async::Redis](https://metacpan.org/pod/Async::Redis) interface; bring your own client and hand it to the backend. PAGI-Channels itself has no runtime dependency on a Redis client.
+Multi-process, multi-server. Takes any client ducking the [Async::Redis](https://metacpan.org/pod/Async::Redis) interface; bring your own client and hand it to the backend. PAGI-Middleware-Channels itself has no runtime dependency on a Redis client.
 
 ```perl
-use PAGI::Channels::Backend::Redis;
+use PAGI::Middleware::Channels::Backend::Redis;
 use Async::Redis;
 
 my $redis = Async::Redis->new(
@@ -79,8 +79,8 @@ my $redis = Async::Redis->new(
 );
 $redis->connect->get;
 
-my $channels = PAGI::Channels->new(
-    backend => PAGI::Channels::Backend::Redis->new(redis => $redis),
+my $channels = PAGI::Middleware::Channels->new(
+    backend => PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis),
 );
 ```
 
@@ -93,7 +93,7 @@ See the `examples/` directory:
 
 ## Documentation
 
-See `perldoc PAGI::Channels` for full documentation.
+See `perldoc PAGI::Middleware::Channels` for full documentation.
 
 ## Testing
 

@@ -1,6 +1,6 @@
 # Task Queue with Progress Example
 
-Demonstrates PAGI-Channels with:
+Demonstrates PAGI-Middleware-Channels with:
 - Task queue processing
 - Real-time progress updates via pattern subscriptions
 - Multiple worker coordination

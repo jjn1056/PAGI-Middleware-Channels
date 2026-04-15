@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # examples/chat/app.pl
-# Chat with presence tracking - demonstrates PAGI-Channels
+# Chat with presence tracking - demonstrates PAGI-Middleware-Channels
 #
 # Usage:
 #   cd examples/chat

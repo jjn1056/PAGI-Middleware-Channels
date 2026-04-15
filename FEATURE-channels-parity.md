@@ -1,6 +1,6 @@
-# PAGI-Channels — Outstanding Work
+# PAGI-Middleware-Channels — Outstanding Work
 
-**What this is:** An inventory of what's *not* done in PAGI-Channels, organized so we can decide what to tackle next and what to defer. The four headline v1 features (presence, pattern subscriptions, delayed messages, message history) are implemented in both the Memory and Redis backends. What follows is the list of gaps.
+**What this is:** An inventory of what's *not* done in PAGI-Middleware-Channels, organized so we can decide what to tackle next and what to defer. The four headline v1 features (presence, pattern subscriptions, delayed messages, message history) are implemented in both the Memory and Redis backends. What follows is the list of gaps.
 
 **Verification state (this session):**
 
@@ -22,7 +22,7 @@
 
 ## 2. Release engineering (CPAN readiness)
 
-All of these block an honest `cpanm PAGI::Channels`.
+All of these block an honest `cpanm PAGI::Middleware::Channels`.
 
 ### 2.1 No `Changes` file
 `@Basic` generates `LICENSE` but not `Changes`. Required for CPAN. Add `[NextRelease]` to `dist.ini` and bootstrap a `Changes` file.
@@ -74,15 +74,15 @@ Decided out of scope in the original brainstorm; remain out absent new signal:
 Informational. The code is authoritative.
 
 ### vs. Django Channels
-| Feature | Django | PAGI-Channels |
+| Feature | Django | PAGI-Middleware-Channels |
 |---|---|---|
-| `group_add` / `group_discard` / `group_send` | Yes | Yes — real aliases for `subscribe` / `unsubscribe` / `publish` (`Channels.pm:189-191`) |
+| `group_add` / `group_discard` / `group_send` | Yes | Yes — real aliases for `subscribe` / `unsubscribe` / `publish` (`lib/PAGI/Channels.pm:76-78`) |
 | Memory backend | Yes | Yes |
 | Redis backend | Yes | Yes |
 | Capacity / message expiry / group expiry | Yes | Yes |
 
 ### vs. Phoenix Channels
-| Feature | Phoenix | PAGI-Channels |
+| Feature | Phoenix | PAGI-Middleware-Channels |
 |---|---|---|
 | Built-in presence | Yes (CRDT) | Yes (event-broadcast + poll) |
 | Presence join/leave events | Yes | Yes |

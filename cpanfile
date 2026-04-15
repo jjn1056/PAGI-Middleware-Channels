@@ -1,4 +1,4 @@
-# cpanfile - PAGI-Channels dependencies
+# cpanfile - PAGI-Middleware-Channels dependencies
 
 # Core
 requires 'perl', '5.018';

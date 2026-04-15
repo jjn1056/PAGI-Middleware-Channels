@@ -1,6 +1,6 @@
 # Chat Example
 
-Multi-user chat demonstrating PAGI-Channels cross-process messaging.
+Multi-user chat demonstrating PAGI-Middleware-Channels cross-process messaging.
 
 ## What It Demonstrates
 
@@ -37,7 +37,7 @@ The app serves its own static files (no separate web server needed):
 - `/` - Chat UI (public/index.html)
 - `/ws/chat` - WebSocket endpoint
 
-## PAGI-Channels Features Used
+## PAGI-Middleware-Channels Features Used
 
 ```perl
 # Subscribe with presence tracking
@@ -69,7 +69,7 @@ Browser 2 ──┼─────>│   Redis     │<─────┼── 
                  pagi-server
 ```
 
-Each worker is a separate process. PAGI-Channels routes messages between them via Redis.
+Each worker is a separate process. PAGI-Middleware-Channels routes messages between them via Redis.
 
 ## Clean stale sessions
 

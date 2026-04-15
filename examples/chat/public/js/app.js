@@ -1,4 +1,4 @@
-// PAGI-Channels Chat Client
+// PAGI-Middleware-Channels Chat Client
 
 let ws;
 let username;
