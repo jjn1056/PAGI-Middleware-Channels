@@ -45,7 +45,7 @@ my @methods = qw(
 for my $m (@methods) {
     like
         dies { $b->$m() },
-        qr/abstract/i,
+        qr/abstract method/i,
         "$m croaks as abstract on bare subclass";
 }
 
@@ -188,7 +188,7 @@ implementations croak; there is no shared behavior in this base class.
 
 Run: `bash -c 'source ~/perl5/perlbrew/etc/bashrc && perlbrew use perl-5.40.0@default && prove -lv t/10-memory/08-abstract-backend.t'`
 
-Expected: PASS. All 15 abstract methods croak with `/abstract/i`.
+Expected: PASS. All 15 abstract methods croak with `/abstract method/i`.
 
 - [ ] **Step 3: Run the full memory suite to confirm no regressions yet**
 
