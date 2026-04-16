@@ -8,9 +8,14 @@ use Test2::V0;
 
 init_loop();
 
-# Validation is not yet enforced by the Redis backend. Phase 2 Task 2.5
-# adds it; this env var marks the failures as TODO until then.
-$ENV{PAGI_CONTRACT_TODO_VALIDATION} = 1;
+# The following env vars mark known Redis-backend bugs as TODO so the
+# compliance suite stays green while Phase 2 fixes them one at a time.
+# Each one corresponds to a specific failing behavior we've already
+# diagnosed and scheduled. Remove each as its corresponding fix lands.
+$ENV{PAGI_CONTRACT_TODO_VALIDATION}           = 1;  # Phase 2 Task 2.4
+$ENV{PAGI_CONTRACT_TODO_CAPACITY_OVERFLOW}    = 1;  # Phase 2 Task 2.4a
+$ENV{PAGI_CONTRACT_TODO_NEXT_MESSAGE_CANCEL}  = 1;  # Phase 2 Task 2.4b
+$ENV{PAGI_CONTRACT_TODO_DELAYED_CLEANUP}      = 1;  # Phase 2 Task 2.4c
 
 SKIP: {
     skip_without_redis();

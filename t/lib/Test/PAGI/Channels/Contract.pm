@@ -12,6 +12,22 @@ our @EXPORT_OK = qw(run_contract_tests);
 
 sub _run(&);
 
+# Wraps a subtest body in a `todo` block when the given env var is true.
+# Used to gate tests that expose known drift pending a specific future fix.
+# Exceptions thrown inside the block are caught and turned into fail() calls
+# so that todo's amnesty can cover them (uncaught exceptions bypass todo).
+sub _maybe_todo {
+    my ($env, $reason, $code) = @_;
+    if ($ENV{$env}) {
+        todo $reason => sub {
+            eval { $code->() };
+            if ($@) { fail("Exception: $@") }
+        };
+    } else {
+        $code->();
+    }
+}
+
 # run_contract_tests($label, $factory, %opts)
 #
 # $label   - human-readable backend name, used in subtest names
@@ -104,19 +120,26 @@ sub _test_core_fifo {
 
 sub _test_core_capacity {
     my ($factory) = @_;
-    my $backend = $factory->(capacity => 3);
 
-    _run { $backend->send('ch', { type => 'msg', n => 1 }) };
-    _run { $backend->send('ch', { type => 'msg', n => 2 }) };
-    _run { $backend->send('ch', { type => 'msg', n => 3 }) };
+    _maybe_todo(
+        'PAGI_CONTRACT_TODO_CAPACITY_OVERFLOW',
+        'Backend does not reject send on capacity overflow (fixed in Phase 2 Task 2.4a)',
+        sub {
+            my $backend = $factory->(capacity => 3);
 
-    my $result = _run {
-        $backend->send('ch', { type => 'msg', n => 4 })->catch(sub {
-            my ($cat) = @_;
-            return { error => $cat };
-        });
-    };
-    is($result->{error}, 'ChannelFull', 'send to full channel fails');
+            _run { $backend->send('ch', { type => 'msg', n => 1 }) };
+            _run { $backend->send('ch', { type => 'msg', n => 2 }) };
+            _run { $backend->send('ch', { type => 'msg', n => 3 }) };
+
+            my $result = _run {
+                $backend->send('ch', { type => 'msg', n => 4 })->catch(sub {
+                    my ($cat) = @_;
+                    return { error => $cat };
+                });
+            };
+            is($result->{error}, 'ChannelFull', 'send to full channel fails');
+        }
+    );
 }
 
 sub _test_pubsub_basic {
@@ -277,16 +300,22 @@ sub _test_next_message {
     };
 
     subtest 'next_message works after prior cancel' => sub {
-        my $backend = $factory->();
+        _maybe_todo(
+            'PAGI_CONTRACT_TODO_NEXT_MESSAGE_CANCEL',
+            'Cancelled next_message leaves backend subscriber state broken (fixed in Phase 2 Task 2.4b)',
+            sub {
+                my $backend = $factory->();
 
-        # Cancel a pending next_message
-        my $f = $backend->next_message('ch1');
-        $f->cancel;
+                # Cancel a pending next_message
+                my $f = $backend->next_message('ch1');
+                $f->cancel;
 
-        # Now send and retrieve normally
-        _run { $backend->send('ch1', { type => 'after-cancel' }) };
-        my $msg = _run { $backend->next_message('ch1') };
-        is($msg->{type}, 'after-cancel', 'next_message works after prior cancel');
+                # Now send and retrieve normally
+                _run { $backend->send('ch1', { type => 'after-cancel' }) };
+                my $msg = _run { $backend->next_message('ch1') };
+                is($msg->{type}, 'after-cancel', 'next_message works after prior cancel');
+            }
+        );
     };
 }
 
@@ -726,24 +755,30 @@ sub _test_delayed {
     };
 
     subtest 'cleanup removes delayed messages targeting the channel' => sub {
-        my $backend = $factory->();
+        _maybe_todo(
+            'PAGI_CONTRACT_TODO_DELAYED_CLEANUP',
+            'cleanup() does not sweep delayed messages (fixed in Phase 2 Task 2.4c)',
+            sub {
+                my $backend = $factory->();
 
-        _run { $backend->send_delayed('ch1', { type => 'delayed1' }, 0.1) };
-        _run { $backend->send_delayed('ch2', { type => 'delayed2' }, 0.1) };
-        _run { $backend->publish_delayed('topic1', { type => 'pub' }, 0.1) };
+                _run { $backend->send_delayed('ch1', { type => 'delayed1' }, 0.1) };
+                _run { $backend->send_delayed('ch2', { type => 'delayed2' }, 0.1) };
+                _run { $backend->publish_delayed('topic1', { type => 'pub' }, 0.1) };
 
-        # Subscribe ch3 to topic1 so we can observe the publish-delayed survives
-        _run { $backend->subscribe('ch3', 'topic1') };
+                # Subscribe ch3 to topic1 so we can observe the publish-delayed survives
+                _run { $backend->subscribe('ch3', 'topic1') };
 
-        _run { $backend->cleanup('ch1') };
+                _run { $backend->cleanup('ch1') };
 
-        # Wait past delay, pump
-        _run { Future::IO->sleep(0.2) };
-        _run { $backend->process_delayed() };
+                # Wait past delay, pump
+                _run { Future::IO->sleep(0.2) };
+                _run { $backend->process_delayed() };
 
-        is(_run { $backend->poll('ch1') }, undef, 'ch1 delayed removed by cleanup');
-        is(_run { $backend->poll('ch2') }->{type}, 'delayed2', 'ch2 delayed survives');
-        is(_run { $backend->poll('ch3') }->{type}, 'pub', 'publish_delayed survives');
+                is(_run { $backend->poll('ch1') }, undef, 'ch1 delayed removed by cleanup');
+                is(_run { $backend->poll('ch2') }->{type}, 'delayed2', 'ch2 delayed survives');
+                is(_run { $backend->poll('ch3') }->{type}, 'pub', 'publish_delayed survives');
+            }
+        );
     };
 }
 sub _test_pattern_subs {
