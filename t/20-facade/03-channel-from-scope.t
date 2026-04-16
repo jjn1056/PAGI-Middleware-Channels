@@ -124,4 +124,34 @@ subtest 'scan_presence delegates to backend' => sub {
     is(scalar @all, 3, 'scan_presence via facade returns all 3 entries');
 };
 
+subtest 'list_presence limit croaks via facade when exceeded' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+
+    my $channels = PAGI::Middleware::Channels->new(
+        backend => $backend,
+    );
+
+    my $err;
+    my $inner_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        my $ch = PAGI::Channel->from_scope($scope);
+
+        for my $i (1..3) {
+            $backend->set_channel_id("lim.u$i");
+            await $backend->subscribe("lim.u$i", 'lim.facade.room',
+                presence => { n => $i });
+        }
+
+        eval {
+            await $ch->list_presence('lim.facade.room', limit => 2);
+        };
+        $err = $@;
+    };
+
+    my $wrapped = $channels->wrap($inner_app);
+    run { $wrapped->({ type => 'websocket' }, async sub { { type => 'websocket.disconnect' } }, async sub { }) };
+
+    like($err, qr/exceeds limit/, 'limit croak propagates via facade');
+};
+
 done_testing;
