@@ -41,7 +41,6 @@ prove -l t/20-facade/
 **Core Modules:**
 - `PAGI::Middleware::Channels` - Middleware factory with `wrap()`
 - `PAGI::Channel` - Per-connection handle; get it with `PAGI::Channel->from_scope($scope)`
-- `PAGI::Channels` - Compatibility shim for `PAGI::Channel` (do not use in new code)
 - `PAGI::Middleware::Channels::Backend` - Role defining backend interface
 - `PAGI::Middleware::Channels::Backend::Memory` - In-memory (single process)
 - `PAGI::Middleware::Channels::Backend::Redis` - Redis (multi-process); takes a caller-owned `Async::Redis` instance
