@@ -7,9 +7,11 @@ use Carp ();
 our $VERSION = '0.001';
 
 # Class method: extract this connection's channel handle from PAGI scope.
+# Accepts a scope hashref or any object that provides a ->scope method.
 # Croaks with a useful message if the middleware was not wired up.
-sub from_scope {
-    my ($class, $scope) = @_;
+sub from {
+    my ($class, $arg) = @_;
+    my $scope = ref($arg) eq 'HASH' ? $arg : $arg->scope;
     my $ch = $scope->{'pagi.channels'}
         or Carp::croak(
             "No channel layer in scope — did you wrap your app with PAGI::Middleware::Channels?"
@@ -120,7 +122,7 @@ PAGI::Channel - Per-connection handle for the PAGI channel layer middleware
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
         my $my_channel = $ch->channel_name;
 
         await $ch->subscribe("chat.room1",
@@ -146,17 +148,19 @@ PAGI::Channel - Per-connection handle for the PAGI channel layer middleware
 
 A handler-facing handle bound to a single connection's channel name and the
 configured backend. Created per-request by L<PAGI::Middleware::Channels>'s
-C<wrap()> and exposed via C<< PAGI::Channel->from_scope($scope) >>.
+C<wrap()> and exposed via C<< PAGI::Channel->from($scope) >>.
 
 =head1 CONSTRUCTORS
 
-=head2 from_scope
+=head2 from
 
-    my $ch = PAGI::Channel->from_scope($scope);
+    my $ch = PAGI::Channel->from($scope);
+    my $ch = PAGI::Channel->from($websocket);   # any object with ->scope
 
-Extract this connection's channel handle from a PAGI scope hashref. Croaks
-with a descriptive message if the app was not wrapped with
-L<PAGI::Middleware::Channels>. Preferred over direct hash key access.
+Extract this connection's channel handle from a PAGI scope hashref or any
+object that provides a C<< ->scope >> method (e.g. L<PAGI::WebSocket>,
+L<PAGI::Request>). Croaks with a descriptive message if the app was not
+wrapped with L<PAGI::Middleware::Channels>.
 
     # Also gives you the connection's unique channel name:
     my $my_channel = $ch->channel_name;
@@ -169,7 +173,7 @@ L<PAGI::Middleware::Channels>. Preferred over direct hash key access.
     );
 
 Direct constructor, primarily for tests and scripts. In production code,
-use L</from_scope> instead.
+use L</from> instead.
 
 =head1 ACCESSORS
 

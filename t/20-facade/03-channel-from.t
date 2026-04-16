@@ -11,7 +11,7 @@ use PAGI::Middleware::Channels;
 use PAGI::Middleware::Channels::Backend::Memory;
 use PAGI::Channel;
 
-subtest 'from_scope returns PAGI::Channel inside a wrapped app' => sub {
+subtest 'from returns PAGI::Channel inside a wrapped app' => sub {
     my $channels = PAGI::Middleware::Channels->new(
         backend => PAGI::Middleware::Channels::Backend::Memory->new,
     );
@@ -19,7 +19,7 @@ subtest 'from_scope returns PAGI::Channel inside a wrapped app' => sub {
     my ($got_ch, $got_channel_name);
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
         $got_ch           = $ch;
         $got_channel_name = $ch->channel_name;
     };
@@ -31,20 +31,41 @@ subtest 'from_scope returns PAGI::Channel inside a wrapped app' => sub {
     like($got_channel_name, qr/^conn\./, 'channel_name has conn. prefix');
 };
 
-subtest 'from_scope croaks with helpful message when middleware not wired' => sub {
+subtest 'from croaks when middleware not wired' => sub {
     like(
-        dies { PAGI::Channel->from_scope({ type => 'websocket' }) },
+        dies { PAGI::Channel->from({ type => 'websocket' }) },
         qr/channel layer/i,
         'croaks with message mentioning "channel layer"',
     );
     like(
-        dies { PAGI::Channel->from_scope({ type => 'websocket' }) },
+        dies { PAGI::Channel->from({ type => 'websocket' }) },
         qr/PAGI::Middleware::Channels/i,
         'croaks with message mentioning the middleware class name',
     );
 };
 
-subtest 'from_scope channel can subscribe and receive messages' => sub {
+subtest 'from accepts object with ->scope method' => sub {
+    my $channels = PAGI::Middleware::Channels->new(
+        backend => PAGI::Middleware::Channels::Backend::Memory->new,
+    );
+
+    my ($got_ch, $got_channel_name);
+    my $inner_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        my $obj = bless { scope => $scope }, 'MockScopeHolder';
+        my $ch = PAGI::Channel->from($obj);
+        $got_ch           = $ch;
+        $got_channel_name = $ch->channel_name;
+    };
+
+    my $wrapped = $channels->wrap($inner_app);
+    run { $wrapped->({ type => 'websocket' }, async sub { { type => 'websocket.disconnect' } }, async sub { }) };
+
+    isa_ok($got_ch, 'PAGI::Channel');
+    like($got_channel_name, qr/^conn\./, 'channel_name has conn. prefix via object');
+};
+
+subtest 'from channel can subscribe and receive messages' => sub {
     my $channels = PAGI::Middleware::Channels->new(
         backend => PAGI::Middleware::Channels::Backend::Memory->new,
     );
@@ -53,7 +74,7 @@ subtest 'from_scope channel can subscribe and receive messages' => sub {
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
 
         await $ch->subscribe('room.test');
         await $ch->backend->send($ch->channel_name, { type => 'ping' });
@@ -65,7 +86,7 @@ subtest 'from_scope channel can subscribe and receive messages' => sub {
     my $wrapped = $channels->wrap($inner_app);
     run { $wrapped->({ type => 'websocket' }, async sub { { type => 'websocket.disconnect' } }, async sub { }) };
 
-    is($received[0]{type}, 'ping', 'channel received message via from_scope handle');
+    is($received[0]{type}, 'ping', 'channel received message via from handle');
 };
 
 subtest 'count_presence delegates to backend' => sub {
@@ -77,7 +98,7 @@ subtest 'count_presence delegates to backend' => sub {
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
 
         await $ch->subscribe('count.room', presence => { user => 'tester' });
 
@@ -101,7 +122,7 @@ subtest 'scan_presence delegates to backend' => sub {
     my @all;
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
 
         for my $i (1..3) {
             $backend->set_channel_id("scan.u$i");
@@ -134,7 +155,7 @@ subtest 'list_presence limit croaks via facade when exceeded' => sub {
     my $err;
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
 
         for my $i (1..3) {
             $backend->set_channel_id("lim.u$i");
@@ -153,5 +174,11 @@ subtest 'list_presence limit croaks via facade when exceeded' => sub {
 
     like($err, qr/exceeds limit/, 'limit croak propagates via facade');
 };
+
+# Minimal mock for testing object-with-scope support
+package MockScopeHolder;
+sub scope { shift->{scope} }
+
+package main;
 
 done_testing;
