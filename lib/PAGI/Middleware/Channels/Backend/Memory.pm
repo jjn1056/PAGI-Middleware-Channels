@@ -71,22 +71,6 @@ async sub poll {
     return $entry->{msg};
 }
 
-# Validation helpers
-sub _validate_channel {
-    my ($self, $channel) = @_;
-
-    die "InvalidChannelName: empty" unless defined $channel && length $channel;
-    die "InvalidChannelName: too long" if length $channel > 100;
-    die "InvalidChannelName: bad chars" unless $channel =~ /^[\w.\-:]+$/;
-}
-
-sub _validate_message {
-    my ($self, $message) = @_;
-
-    die "InvalidMessage: not a hashref" unless ref $message eq 'HASH';
-    die "InvalidMessage: missing type" unless defined $message->{type};
-}
-
 # Resolve any futures waiting for messages on this channel.
 # Called by send() and _deliver_to_channel() after enqueueing.
 # Each waiter is a result Future from next_message(); we poll for each one

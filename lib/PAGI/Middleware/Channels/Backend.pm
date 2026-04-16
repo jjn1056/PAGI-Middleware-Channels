@@ -32,6 +32,27 @@ sub new {
     }, $class;
 }
 
+# Validation helpers. Backends MUST call these from their public entry
+# methods. A backend with stricter substrate constraints (e.g., a Pusher
+# backend with its own naming rules) MAY override _validate_channel to
+# add more checks; it MUST NOT loosen them.
+
+sub _validate_channel {
+    my ($self, $channel) = @_;
+    die "InvalidChannelName: empty"     unless defined $channel && length $channel;
+    die "InvalidChannelName: too long"  if length $channel > 100;
+    die "InvalidChannelName: bad chars" unless $channel =~ /^[\w.\-:]+$/;
+}
+
+# Topics use the same naming rules as channels.
+sub _validate_topic { goto &_validate_channel }
+
+sub _validate_message {
+    my ($self, $message) = @_;
+    die "InvalidMessage: not a hashref" unless ref $message eq 'HASH';
+    die "InvalidMessage: missing type"  unless defined $message->{type};
+}
+
 my @ABSTRACT = qw(
     send poll subscribe unsubscribe publish flush cleanup
     psubscribe punsubscribe track untrack list_presence
