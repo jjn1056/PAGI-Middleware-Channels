@@ -14,14 +14,23 @@ sub _run(&);
 
 # Wraps a subtest body in a `todo` block when the given env var is true.
 # Used to gate tests that expose known drift pending a specific future fix.
+#
 # Exceptions thrown inside the block are caught and turned into fail() calls
 # so that todo's amnesty can cover them (uncaught exceptions bypass todo).
+#
+# CAVEAT: any exception is currently swallowed, not just the expected one.
+# A future regression that throws a *different* exception inside a gated
+# block will be silently amnestied. When this becomes a problem, extend the
+# signature with an $expected_pattern arg and fail (outside todo) when the
+# captured exception doesn't match.
 sub _maybe_todo {
     my ($env, $reason, $code) = @_;
     if ($ENV{$env}) {
         todo $reason => sub {
-            eval { $code->() };
-            if ($@) { fail("Exception: $@") }
+            eval { $code->(); 1 } or do {
+                my $err = $@;
+                fail("Exception: $err");
+            };
         };
     } else {
         $code->();
@@ -382,59 +391,53 @@ sub _test_flush {
 
 sub _test_validation {
     my ($factory) = @_;
+    _maybe_todo(
+        'PAGI_CONTRACT_TODO_VALIDATION',
+        'Backend does not yet enforce validation (fixed in Phase 2 Task 2.4)',
+        sub {
+            my $backend = $factory->();
 
-    if ($ENV{PAGI_CONTRACT_TODO_VALIDATION}) {
-        todo "Backend does not yet enforce validation (fixed in Phase 2 Task 2.5)" => sub {
-            _run_validation_assertions($factory);
-        };
-    } else {
-        _run_validation_assertions($factory);
-    }
-}
+            # Channel name validation
+            like(
+                dies { _run { $backend->send('', { type => 'x' }) } },
+                qr/InvalidChannelName/,
+                'empty channel name rejected'
+            );
+            like(
+                dies { _run { $backend->send('a' x 101, { type => 'x' }) } },
+                qr/InvalidChannelName/,
+                'over-length channel name rejected'
+            );
+            like(
+                dies { _run { $backend->send('bad name with spaces', { type => 'x' }) } },
+                qr/InvalidChannelName/,
+                'channel name with disallowed chars rejected'
+            );
 
-sub _run_validation_assertions {
-    my ($factory) = @_;
-    my $backend = $factory->();
+            # Message validation
+            like(
+                dies { _run { $backend->send('ch', 'not-a-hashref') } },
+                qr/InvalidMessage/,
+                'non-hashref message rejected'
+            );
+            like(
+                dies { _run { $backend->send('ch', { no_type => 1 }) } },
+                qr/InvalidMessage/,
+                'message missing type rejected'
+            );
 
-    # Channel name validation
-    like(
-        dies { _run { $backend->send('', { type => 'x' }) } },
-        qr/InvalidChannelName/,
-        'empty channel name rejected'
-    );
-    like(
-        dies { _run { $backend->send('a' x 101, { type => 'x' }) } },
-        qr/InvalidChannelName/,
-        'over-length channel name rejected'
-    );
-    like(
-        dies { _run { $backend->send('bad name with spaces', { type => 'x' }) } },
-        qr/InvalidChannelName/,
-        'channel name with disallowed chars rejected'
-    );
-
-    # Message validation
-    like(
-        dies { _run { $backend->send('ch', 'not-a-hashref') } },
-        qr/InvalidMessage/,
-        'non-hashref message rejected'
-    );
-    like(
-        dies { _run { $backend->send('ch', { no_type => 1 }) } },
-        qr/InvalidMessage/,
-        'message missing type rejected'
-    );
-
-    # Topic validation (subscribe and publish use the same rules)
-    like(
-        dies { _run { $backend->subscribe('ch', '') } },
-        qr/InvalidChannelName/,
-        'subscribe rejects empty topic'
-    );
-    like(
-        dies { _run { $backend->publish('', { type => 'x' }) } },
-        qr/InvalidChannelName/,
-        'publish rejects empty topic'
+            # Topic validation (subscribe and publish use the same rules)
+            like(
+                dies { _run { $backend->subscribe('ch', '') } },
+                qr/InvalidChannelName/,
+                'subscribe rejects empty topic'
+            );
+            like(
+                dies { _run { $backend->publish('', { type => 'x' }) } },
+                qr/InvalidChannelName/,
+                'publish rejects empty topic'
+            );
+        }
     );
 }
 
