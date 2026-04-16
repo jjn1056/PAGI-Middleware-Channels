@@ -10,15 +10,6 @@ use Time::HiRes ();
 use Carp ();
 use namespace::clean;
 
-# Defaults
-use constant {
-    DEFAULT_CAPACITY     => 100,
-    DEFAULT_EXPIRY       => 60,
-    DEFAULT_GROUP_EXPIRY => 86400,
-    DEFAULT_MAX_SIZE     => 1_048_576,
-    DEFAULT_HISTORY_SIZE => 0,
-};
-
 sub new {
     my ($class, %args) = @_;
 
@@ -26,23 +17,19 @@ sub new {
         or die "PAGI::Middleware::Channels::Backend::Redis: 'redis' argument required "
              . "(Async::Redis instance or compatible)";
 
-    return bless {
-        _redis       => $redis,
-        _channel_id  => undef,
-        capacity     => $args{capacity}     // DEFAULT_CAPACITY,
-        expiry       => $args{expiry}       // DEFAULT_EXPIRY,
-        group_expiry => $args{group_expiry} // DEFAULT_GROUP_EXPIRY,
-        max_size     => $args{max_size}     // DEFAULT_MAX_SIZE,
-        history_size => $args{history_size} // DEFAULT_HISTORY_SIZE,
+    my $self = $class->SUPER::new(%args);
 
-        # Subscriber connection (for next_message notification)
-        _subscriber      => undef,  # Dedicated Async::Redis for pub/sub
-        _subscription    => undef,  # Async::Redis::Subscription object
-        _listener_f      => undef,  # Background listener Future
-        _waiters         => {},     # channel -> [ Future, ... ] (signal futures for _notify_waiters)
-        _active_fs       => {},     # channel -> [ Future, ... ] (outer futures for flush/cleanup)
-        _notify_poll_fs  => [],     # In-flight poll() futures (kept alive by _notify_waiters)
-    }, $class;
+    # Redis-specific state
+    $self->{_redis}          = $redis;
+    $self->{_channel_id}     = undef;
+    $self->{_subscriber}     = undef;
+    $self->{_subscription}   = undef;
+    $self->{_listener_f}     = undef;
+    $self->{_waiters}        = {};
+    $self->{_active_fs}      = {};
+    $self->{_notify_poll_fs} = [];
+
+    return $self;
 }
 
 # Async::Redis does not prefix KEYS/SCAN patterns, so we prepend

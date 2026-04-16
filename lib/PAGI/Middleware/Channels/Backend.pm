@@ -7,11 +7,29 @@ use Carp ();
 # override every method below. Each default implementation croaks so
 # missing overrides surface immediately on first call.
 
+# Shared default configuration values. Subclasses inherit these.
+use constant {
+    DEFAULT_CAPACITY     => 100,
+    DEFAULT_EXPIRY       => 60,
+    DEFAULT_GROUP_EXPIRY => 86400,
+    DEFAULT_MAX_SIZE     => 1_048_576,
+    DEFAULT_HISTORY_SIZE => 0,
+};
+
 sub new {
     my ($class, %args) = @_;
     Carp::croak("$class is abstract and cannot be instantiated directly")
         if $class eq __PACKAGE__;
-    return bless { %args }, $class;
+
+    return bless {
+        capacity     => $args{capacity}     // DEFAULT_CAPACITY,
+        expiry       => $args{expiry}       // DEFAULT_EXPIRY,
+        group_expiry => $args{group_expiry} // DEFAULT_GROUP_EXPIRY,
+        max_size     => $args{max_size}     // DEFAULT_MAX_SIZE,
+        history_size => $args{history_size} // DEFAULT_HISTORY_SIZE,
+        # subclass-specific args remain in %args; subclasses store what they need
+        %args,
+    }, $class;
 }
 
 my @ABSTRACT = qw(
@@ -42,7 +60,37 @@ PAGI::Middleware::Channels::Backend - Abstract base class for channel layer back
 =head1 DESCRIPTION
 
 Subclasses must override every method listed below. The default
-implementations croak; there is no shared behavior in this base class.
+implementations croak. The base class provides shared configuration
+constants and a C<new> constructor that populates common config keys.
+
+=head1 SHARED CONFIGURATION
+
+The following configuration keys are accepted by C<new> and pre-populated
+in every backend instance. Subclasses read them via C<$self-E<gt>{key}>.
+
+=over 4
+
+=item capacity => $int
+
+Maximum number of messages per channel queue. Default: 100.
+
+=item expiry => $seconds
+
+Time-to-live for messages in seconds. Default: 60.
+
+=item group_expiry => $seconds
+
+Time-to-live for subscription group membership. Default: 86400 (1 day).
+
+=item max_size => $bytes
+
+Maximum size of a serialized message. Default: 1_048_576 (1 MB).
+
+=item history_size => $int
+
+Number of messages to retain for the history feature. Default: 0 (disabled).
+
+=back
 
 =head1 REQUIRED METHODS
 

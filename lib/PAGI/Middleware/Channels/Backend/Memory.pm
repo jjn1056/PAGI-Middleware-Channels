@@ -8,40 +8,21 @@ use Time::HiRes ();
 use Carp ();
 use namespace::clean;
 
-# Defaults
-use constant {
-    DEFAULT_CAPACITY     => 100,
-    DEFAULT_EXPIRY       => 60,
-    DEFAULT_GROUP_EXPIRY => 86400,
-    DEFAULT_MAX_SIZE     => 1_048_576,
-    DEFAULT_HISTORY_SIZE => 0,
-};
-
 sub new {
     my ($class, %args) = @_;
+    my $self = $class->SUPER::new(%args);
 
-    return bless {
-        # Config
-        capacity     => $args{capacity}     // DEFAULT_CAPACITY,
-        expiry       => $args{expiry}       // DEFAULT_EXPIRY,
-        group_expiry => $args{group_expiry} // DEFAULT_GROUP_EXPIRY,
-        max_size     => $args{max_size}     // DEFAULT_MAX_SIZE,
-        history_size => $args{history_size} // DEFAULT_HISTORY_SIZE,
+    # Memory-specific state initialization
+    $self->{queues}      = {};
+    $self->{groups}      = {};
+    $self->{patterns}    = {};
+    $self->{presence}    = {};
+    $self->{history}     = {};
+    $self->{delayed}     = [];
+    $self->{_waiters}    = {};
+    $self->{_channel_id} = undef;
 
-        # State
-        queues       => {},  # channel -> [ {msg, expires} ]
-        groups       => {},  # topic -> { channel -> expires }
-        patterns     => {},  # channel -> [ {pattern, regex} ]
-        presence     => {},  # topic -> { channel -> {data, expires} }
-        history      => {},  # topic -> [ {msg, timestamp} ]
-        delayed      => [],  # [ {time, type, target, msg} ]
-
-        # Waiter notification (for next_message)
-        _waiters     => {},  # channel -> [ Future, ... ]
-
-        # Internal
-        _channel_id  => undef,  # Set by facade for presence
-    }, $class;
+    return $self;
 }
 
 # Core: send
