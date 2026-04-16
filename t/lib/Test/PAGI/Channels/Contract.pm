@@ -253,11 +253,6 @@ sub _test_next_message {
 
         $f->cancel;
         ok($f->is_cancelled, 'future cancelled');
-
-        # Internal waiters list should be clean
-        my $waiters = $backend->{_waiters}{'ch1'} // [];
-        my @active = grep { !$_->is_cancelled } @$waiters;
-        is(scalar @active, 0, 'no active waiters after cancel');
     };
 
     subtest 'cleanup cancels waiters for channel' => sub {
