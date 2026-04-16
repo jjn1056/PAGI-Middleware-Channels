@@ -148,9 +148,9 @@ the inner app exits.
 
 =head2 LOOP AGNOSTICISM
 
-This module uses L<Future::IO> only. It works with any event loop —
-L<IO::Async>, L<Mojo::IOLoop>, or any other implementation of the
-Future::IO interface.
+This module and its backends use L<Future> and L<Future::IO>. It works
+with any event loop — L<IO::Async>, L<Mojo::IOLoop>, or any other
+implementation of the Future::IO interface.
 
 =head1 METHODS
 
@@ -230,7 +230,7 @@ currently used by Channels but available for future extension.
 
 =head1 SEE ALSO
 
-L<PAGI::Channel>, L<Async::Redis>, L<Future::IO>, L<Future::AsyncAwait>
+L<PAGI::Channel>, L<Async::Redis>, L<Future>, L<Future::IO>, L<Future::AsyncAwait>
 
 =head1 AUTHOR
 

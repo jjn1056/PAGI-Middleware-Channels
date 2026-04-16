@@ -17,6 +17,7 @@ my @methods = qw(
     psubscribe punsubscribe track untrack list_presence
     count_presence scan_presence
     send_delayed publish_delayed subscribe_with_history
+    next_message
 );
 
 for my $m (@methods) {
