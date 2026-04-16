@@ -734,7 +734,67 @@ sub _test_delayed {
         is(_run { $backend->poll('ch3') }->{type}, 'pub', 'publish_delayed survives');
     };
 }
-sub _test_pattern_subs    { ok(1, 'placeholder - Task 1.6') }
+sub _test_pattern_subs {
+    my ($factory) = @_;
+
+    subtest 'single-level wildcard (*)' => sub {
+        my $backend = $factory->();
+
+        # chat.* matches chat.room1, chat.general, NOT chat.room1.messages
+        _run { $backend->psubscribe('ch1', 'chat.*') };
+
+        _run { $backend->publish('chat.room1', { type => 'msg', n => 1 }) };
+        _run { $backend->publish('chat.general', { type => 'msg', n => 2 }) };
+        _run { $backend->publish('chat.room1.messages', { type => 'msg', n => 3 }) };
+        _run { $backend->publish('notifications', { type => 'msg', n => 4 }) };
+
+        is(_run { $backend->poll('ch1') }->{n}, 1, 'chat.room1 matched');
+        is(_run { $backend->poll('ch1') }->{n}, 2, 'chat.general matched');
+        is(_run { $backend->poll('ch1') }, undef, 'chat.room1.messages NOT matched');
+    };
+
+    subtest 'multi-level wildcard (**)' => sub {
+        my $backend = $factory->();
+
+        # notifications.** matches notifications, notifications.user, notifications.user.123
+        _run { $backend->psubscribe('ch1', 'notifications.**') };
+
+        _run { $backend->publish('notifications', { type => 'msg', n => 1 }) };
+        _run { $backend->publish('notifications.user', { type => 'msg', n => 2 }) };
+        _run { $backend->publish('notifications.user.123.email', { type => 'msg', n => 3 }) };
+        _run { $backend->publish('alerts', { type => 'msg', n => 4 }) };
+
+        is(_run { $backend->poll('ch1') }->{n}, 1, 'notifications matched');
+        is(_run { $backend->poll('ch1') }->{n}, 2, 'notifications.user matched');
+        is(_run { $backend->poll('ch1') }->{n}, 3, 'notifications.user.123.email matched');
+        is(_run { $backend->poll('ch1') }, undef, 'alerts NOT matched');
+    };
+
+    subtest 'punsubscribe' => sub {
+        my $backend = $factory->();
+
+        _run { $backend->psubscribe('ch1', 'events.*') };
+        _run { $backend->punsubscribe('ch1', 'events.*') };
+        _run { $backend->publish('events.click', { type => 'msg' }) };
+
+        is(_run { $backend->poll('ch1') }, undef, 'punsubscribed pattern no longer matches');
+    };
+
+    subtest 'mixed exact and pattern subscriptions' => sub {
+        my $backend = $factory->();
+
+        # Exact subscription
+        _run { $backend->subscribe('ch1', 'room.vip') };
+        # Pattern subscription
+        _run { $backend->psubscribe('ch1', 'room.*') };
+
+        _run { $backend->publish('room.vip', { type => 'msg' }) };
+
+        # Should only receive once (dedup)
+        ok(_run { $backend->poll('ch1') }, 'received message');
+        is(_run { $backend->poll('ch1') }, undef, 'no duplicate from pattern');
+    };
+}
 
 # Helper used by every subtest: synchronously run a Future-returning coderef.
 sub _run(&) {
