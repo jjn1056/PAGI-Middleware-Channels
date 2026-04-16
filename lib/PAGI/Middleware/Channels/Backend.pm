@@ -51,6 +51,13 @@ sub _validate_message {
     my ($self, $message) = @_;
     die "InvalidMessage: not a hashref" unless ref $message eq 'HASH';
     die "InvalidMessage: missing type"  unless defined $message->{type};
+
+    if ($self->{max_size}) {
+        require JSON::MaybeXS;
+        my $size = length(JSON::MaybeXS::encode_json($message));
+        die "MessageTooLarge: $size bytes exceeds max_size $self->{max_size}"
+            if $size > $self->{max_size};
+    }
 }
 
 # Glob-pattern to regex compilation. Used by PatternSubs-capable backends

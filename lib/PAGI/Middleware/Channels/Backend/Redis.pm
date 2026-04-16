@@ -147,6 +147,9 @@ async sub _deliver_to_channel {
 async sub send {
     my ($self, $channel, $message) = @_;
 
+    $self->_validate_channel($channel);
+    $self->_validate_message($message);
+
     my $key = $self->_queue_key($channel);
     my $len = await $self->{_redis}->llen($key);
 
@@ -226,6 +229,9 @@ sub next_message {
 async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
 
+    $self->_validate_channel($channel);
+    $self->_validate_topic($topic);
+
     my $key = $self->_group_key($topic);
     await $self->{_redis}->sadd($key, $channel);
     await $self->{_redis}->expire($key, $self->{group_expiry});
@@ -246,6 +252,9 @@ async sub subscribe {
 # Unsubscribe
 async sub unsubscribe {
     my ($self, $channel, $topic) = @_;
+
+    $self->_validate_channel($channel);
+    $self->_validate_topic($topic);
 
     # Get presence data before removing (for leave event)
     my $pkey = $self->_presence_key($topic);
@@ -273,6 +282,8 @@ async sub unsubscribe {
 async sub psubscribe {
     my ($self, $channel, $pattern) = @_;
 
+    $self->_validate_channel($channel);
+
     # Store pattern association: channel -> pattern (using set to avoid duplicates)
     my $key = $self->_pattern_key($channel);
     await $self->{_redis}->sadd($key, $pattern);
@@ -284,6 +295,8 @@ async sub psubscribe {
 # Pattern Unsubscribe
 async sub punsubscribe {
     my ($self, $channel, $pattern) = @_;
+
+    $self->_validate_channel($channel);
 
     my $key = $self->_pattern_key($channel);
     if (defined $pattern) {
@@ -298,6 +311,9 @@ async sub punsubscribe {
 # Publish
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
+
+    $self->_validate_topic($topic);
+    $self->_validate_message($message);
 
     my %excluded = %{ $self->_normalize_exclude($opts{exclude}) };
 
@@ -434,6 +450,8 @@ async sub cleanup {
 async sub track {
     my ($self, $topic, $presence_data, $channel) = @_;
 
+    $self->_validate_topic($topic);
+
     $channel //= $self->{_channel_id}
         or die "track() requires channel_id or set_channel_id() first";
 
@@ -450,6 +468,8 @@ async sub track {
 async sub untrack {
     my ($self, $topic) = @_;
 
+    $self->_validate_topic($topic);
+
     my $channel = $self->{_channel_id}
         or die "untrack() requires set_channel_id() first";
 
@@ -462,6 +482,9 @@ async sub untrack {
 # Presence: list_presence
 async sub list_presence {
     my ($self, $topic, %opts) = @_;
+
+    $self->_validate_topic($topic);
+
     my $limit = $opts{limit};
 
     my $key = $self->_presence_key($topic);
@@ -502,6 +525,8 @@ async sub list_presence {
 async sub count_presence {
     my ($self, $topic) = @_;
 
+    $self->_validate_topic($topic);
+
     my $key = $self->_presence_key($topic);
     return await $self->{_redis}->hlen($key);
 }
@@ -511,6 +536,9 @@ async sub count_presence {
 # count is a hint to Redis — actual batch size may vary.
 async sub scan_presence {
     my ($self, $topic, %opts) = @_;
+
+    $self->_validate_topic($topic);
+
     my $cursor = $opts{cursor} // 0;
     my $count  = $opts{count}  // 100;
 
@@ -536,6 +564,9 @@ async sub scan_presence {
 async sub send_delayed {
     my ($self, $channel, $message, $delay_seconds) = @_;
 
+    $self->_validate_channel($channel);
+    $self->_validate_message($message);
+
     my $delivery_time = Time::HiRes::time() + $delay_seconds;
     my $entry = encode_json({
         type    => 'send',
@@ -552,6 +583,9 @@ async sub send_delayed {
 # Delayed: publish_delayed
 async sub publish_delayed {
     my ($self, $topic, $message, $delay_seconds) = @_;
+
+    $self->_validate_topic($topic);
+    $self->_validate_message($message);
 
     my $delivery_time = Time::HiRes::time() + $delay_seconds;
     my $entry = encode_json({
@@ -600,6 +634,9 @@ async sub process_delayed {
 # History: subscribe_with_history
 async sub subscribe_with_history {
     my ($self, $channel, $topic, $count, %opts) = @_;
+
+    $self->_validate_channel($channel);
+    $self->_validate_topic($topic);
 
     # Get history first (before subscribing so we get messages in order)
     my $history_key = $self->_history_key($topic);

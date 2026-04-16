@@ -437,6 +437,13 @@ sub _test_validation {
                 qr/InvalidChannelName/,
                 'publish rejects empty topic'
             );
+
+            my $tiny = $factory->(max_size => 100);
+            like(
+                dies { _run { $tiny->send('ch', { type => 'big', payload => 'x' x 1000 }) } },
+                qr/MessageTooLarge/,
+                'oversized message rejected'
+            );
         }
     );
 }

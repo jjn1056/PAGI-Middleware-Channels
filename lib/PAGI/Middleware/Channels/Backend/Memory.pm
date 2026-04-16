@@ -91,7 +91,7 @@ async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
 
     $self->_validate_channel($channel);
-    $self->_validate_channel($topic);  # Same rules for topics
+    $self->_validate_topic($topic);
 
     my $now = time();
     my $is_new = !exists $self->{groups}{$topic}{$channel};
@@ -165,7 +165,7 @@ sub _deliver_to_channel {
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
 
-    $self->_validate_channel($topic);
+    $self->_validate_topic($topic);
     $self->_validate_message($message);
 
     my %excluded = %{ $self->_normalize_exclude($opts{exclude}) };
@@ -316,7 +316,7 @@ async sub track {
     my $channel = $self->{_channel_id}
         or die "track() requires set_channel_id() first";
 
-    $self->_validate_channel($topic);
+    $self->_validate_topic($topic);
 
     my $now = time();
     $self->{presence}{$topic} //= {};
@@ -465,7 +465,7 @@ async sub send_delayed {
 async sub publish_delayed {
     my ($self, $topic, $message, $delay_seconds) = @_;
 
-    $self->_validate_channel($topic);
+    $self->_validate_topic($topic);
     $self->_validate_message($message);
 
     my $deliver_at = Time::HiRes::time() + $delay_seconds;
@@ -510,7 +510,7 @@ async sub subscribe_with_history {
     my ($self, $channel, $topic, $history_count, %opts) = @_;
 
     $self->_validate_channel($channel);
-    $self->_validate_channel($topic);
+    $self->_validate_topic($topic);
 
     my $now = Time::HiRes::time();
 
