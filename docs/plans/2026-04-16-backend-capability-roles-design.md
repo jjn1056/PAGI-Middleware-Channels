@@ -2107,7 +2107,186 @@ EOF
 )"
 ```
 
-**Phase 2 done.** Base class owns shared code; both backends use it; the validation drift bug is fixed.
+### Task 2.4a: Fix Redis capacity-overflow rejection
+
+**Files:**
+- Modify: `lib/PAGI/Middleware/Channels/Backend/Redis.pm` (around line 187 in the `send` method)
+- Modify: `t/30-redis/00-contract.t` — remove `$ENV{PAGI_CONTRACT_TODO_CAPACITY_OVERFLOW} = 1;`
+
+**Background:** Memory rejects `send` to a full channel by `await Future->fail('ChannelFull', ...)`. Redis returns `Future->fail('ChannelFull', ...)` directly without `await`, so the caller receives the Future object instead of having the failure propagate through async semantics. The compliance test `_test_core_capacity` is currently TODO-gated; flipping the env var off should make it pass.
+
+- [ ] **Step 1: Confirm the test fails again with env var off**
+
+Edit `t/30-redis/00-contract.t` and comment out the `PAGI_CONTRACT_TODO_CAPACITY_OVERFLOW` line. Run:
+
+```bash
+<perl-env> REDIS_HOST=localhost prove -lv t/30-redis/00-contract.t
+```
+
+Expected: `_test_core_capacity` fails with "Not a HASH reference".
+
+- [ ] **Step 2: Fix the Redis `send` method**
+
+In `lib/PAGI/Middleware/Channels/Backend/Redis.pm`, find the capacity check in `send` (around line 187). Change:
+
+```perl
+return Future->fail('ChannelFull', 'PAGI::Channels');
+```
+
+to:
+
+```perl
+await Future->fail('ChannelFull', 'PAGI::Channels');
+```
+
+- [ ] **Step 3: Verify the test now passes**
+
+```bash
+<perl-env> REDIS_HOST=localhost prove -lv t/30-redis/00-contract.t
+```
+
+Expected: `_test_core_capacity` PASSES.
+
+- [ ] **Step 4: Delete the TODO env var line entirely from `t/30-redis/00-contract.t`**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/PAGI/Middleware/Channels/Backend/Redis.pm t/30-redis/00-contract.t
+git commit -m "$(cat <<'EOF'
+fix(redis): propagate ChannelFull as rejected Future from send()
+
+The capacity-overflow path returned Future->fail(...) directly inside
+an async sub, so the caller received the Future object rather than
+having its failure propagate through async semantics. await it instead.
+
+Removes the corresponding PAGI_CONTRACT_TODO_CAPACITY_OVERFLOW gate.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 2.4b: Fix Redis next_message cancel cleanup
+
+**Files:**
+- Modify: `lib/PAGI/Middleware/Channels/Backend/Redis.pm` (the `next_message` method's `on_cancel` handler around lines 239-243)
+- Modify: `t/30-redis/00-contract.t` — remove `$ENV{PAGI_CONTRACT_TODO_NEXT_MESSAGE_CANCEL} = 1;`
+
+**Background:** Cancelling a `next_message` Future leaves the Redis subscriber in a stale state. The current `on_cancel` handler removes the cancelled signal future from `_waiters` but doesn't unsubscribe from the underlying Redis pub/sub when no more waiters remain. The next `send`+`next_message` round trip never receives the notification and hangs until `read_timeout`.
+
+- [ ] **Step 1: Confirm test fails with env var off**
+
+Comment out `PAGI_CONTRACT_TODO_NEXT_MESSAGE_CANCEL` in the Redis driver. Run the contract — `'next_message works after prior cancel'` should hang/timeout.
+
+- [ ] **Step 2: Audit the `next_message` + subscriber bookkeeping in `Redis.pm`**
+
+Read the `next_message` method (around line 223), `_start_listener` (around line 123), and any helper that maintains the subscriber connection. Decide between two fix approaches before writing code:
+
+(a) **Reference-count + unsubscribe.** When `on_cancel` fires and `_waiters{$channel}` is now empty, call the appropriate UNSUBSCRIBE/PUNSUBSCRIBE on the subscriber connection so a fresh subscription is created on the next call.
+
+(b) **Keep subscriber, fix the notify path.** Investigate why a cancelled waiter prevents subsequent waiters from being notified — there may be a stale waiter reference in the listener or the listener may have stopped consuming messages.
+
+Option (a) is more localized; option (b) requires understanding the listener loop. Pick (a) unless inspection shows the listener has its own bug.
+
+- [ ] **Step 3: Implement the fix**
+
+Adjust the `on_cancel` closure to do the right cleanup. Make sure the cleanup is idempotent (multiple cancels of the same channel shouldn't cause double-unsubscribe).
+
+- [ ] **Step 4: Verify**
+
+Both contract drivers must stay green. Specifically:
+
+```bash
+<perl-env> REDIS_HOST=localhost prove -lv t/30-redis/00-contract.t
+```
+
+`'next_message works after prior cancel'` PASSES. No other subtests regress.
+
+- [ ] **Step 5: Delete the TODO env var line**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add lib/PAGI/Middleware/Channels/Backend/Redis.pm t/30-redis/00-contract.t
+git commit -m "$(cat <<'EOF'
+fix(redis): clean up subscriber state when next_message is cancelled
+
+Cancelling a next_message Future left the Redis subscriber connection
+holding a stale subscription, so the next send+next_message round trip
+never received the notification. The on_cancel handler now unsubscribes
+when no more waiters remain on a channel.
+
+Removes the corresponding PAGI_CONTRACT_TODO_NEXT_MESSAGE_CANCEL gate.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 2.4c: Fix Redis cleanup of pending delayed messages
+
+**Files:**
+- Modify: `lib/PAGI/Middleware/Channels/Backend/Redis.pm` (the `cleanup` method around lines 424-473; the delayed-message storage at `_delayed_key`)
+- Modify: `t/30-redis/00-contract.t` — remove `$ENV{PAGI_CONTRACT_TODO_DELAYED_CLEANUP} = 1;`
+
+**Background:** Memory's `cleanup($channel)` filters out delayed entries whose `target` matches `$channel`. Redis's `cleanup` never touches the delayed ZSET, so delayed messages targeting a cleaned-up channel still deliver after the delay. The compliance test `'cleanup removes delayed messages targeting the channel'` proves this.
+
+- [ ] **Step 1: Confirm test fails with env var off**
+
+Comment out `PAGI_CONTRACT_TODO_DELAYED_CLEANUP` in the Redis driver, run the contract — the cleanup-delayed subtest fails (ch1 still polls a message).
+
+- [ ] **Step 2: Audit the delayed-store schema**
+
+Read `send_delayed`, `publish_delayed`, and `process_delayed` in `Redis.pm`. The delayed store is a sorted set at `<prefix>:_delayed` keyed by JSON payloads, scored by delivery timestamp. Each payload includes a `target` field (channel name for `send_delayed`, topic for `publish_delayed`) and a `kind` discriminator.
+
+- [ ] **Step 3: Decide schema vs. iterate**
+
+Option (a) — **iterate-and-filter** (small fix): inside `cleanup($channel)`, `ZRANGE _delayed_key 0 -1`, decode each entry, ZREM the ones with `kind = 'send'` and `target eq $channel`. O(n) per cleanup but simple. Use this unless step 4 reveals a problem.
+
+Option (b) — **schema redesign** (larger): split the delayed store into per-channel ZSETs (`<prefix>:_delayed:send:<channel>`) plus a per-topic store. Cleanup becomes a single DEL. Defer to a follow-up task if perf becomes an issue.
+
+- [ ] **Step 4: Implement option (a)**
+
+Add a helper or inline block to `cleanup` that iterates the delayed ZSET, filters by `kind eq 'send' && target eq $channel`, and ZREMs matching entries. Take care not to remove `kind eq 'publish'` entries — those target topics, not channels.
+
+- [ ] **Step 5: Verify**
+
+```bash
+<perl-env> REDIS_HOST=localhost prove -lv t/30-redis/00-contract.t
+```
+
+`'cleanup removes delayed messages targeting the channel'` PASSES. No other tests regress (especially the delayed subtests that rely on `process_delayed`).
+
+- [ ] **Step 6: Delete the TODO env var line**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add lib/PAGI/Middleware/Channels/Backend/Redis.pm t/30-redis/00-contract.t
+git commit -m "$(cat <<'EOF'
+fix(redis): sweep pending delayed messages in cleanup()
+
+cleanup($channel) previously left scheduled send_delayed entries in the
+ZSET, so a cleaned-up channel still received its delayed message after
+the timer expired. cleanup now scans the delayed store and removes
+entries whose kind=send and target matches the channel. publish_delayed
+entries (which target topics) are preserved.
+
+Removes the corresponding PAGI_CONTRACT_TODO_DELAYED_CLEANUP gate.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+**Phase 2 done.** Base class owns shared code; both backends use it; the validation drift bug AND the three Redis-backend bugs surfaced by the compliance suite are fixed. After Tasks 2.4 / 2.4a / 2.4b / 2.4c land, all four `PAGI_CONTRACT_TODO_*` gates should be removed from `t/30-redis/00-contract.t`.
 
 ---
 
