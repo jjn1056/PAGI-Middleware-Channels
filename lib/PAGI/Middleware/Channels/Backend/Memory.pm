@@ -36,6 +36,9 @@ sub new {
         history      => {},  # topic -> [ {msg, timestamp} ]
         delayed      => [],  # [ {time, type, target, msg} ]
 
+        # Waiter notification (for next_message)
+        _waiters     => {},  # channel -> [ Future, ... ]
+
         # Internal
         _channel_id  => undef,  # Set by facade for presence
     }, $class;
@@ -60,6 +63,8 @@ async sub send {
         msg     => $message,
         expires => time() + $self->{expiry},
     };
+
+    $self->_notify_waiters($channel);
 
     return 1;
 }
@@ -99,6 +104,21 @@ sub _validate_message {
 
     die "InvalidMessage: not a hashref" unless ref $message eq 'HASH';
     die "InvalidMessage: missing type" unless defined $message->{type};
+}
+
+# Resolve any futures waiting for messages on this channel.
+# Called by send() and _deliver_to_channel() after enqueueing.
+# Each waiter is a result Future from next_message(); we poll for each one
+# so it gets the enqueued message directly.
+sub _notify_waiters {
+    my ($self, $channel) = @_;
+    my $waiters = delete $self->{_waiters}{$channel} or return;
+    for my $result_f (@$waiters) {
+        next if $result_f->is_ready;
+        $self->poll($channel)->on_done(sub {
+            $result_f->done($_[0]) unless $result_f->is_ready;
+        });
+    }
 }
 
 # Helper to convert pattern to regex
@@ -199,6 +219,7 @@ sub _deliver_to_channel {
             msg     => $message,
             expires => $now + $self->{expiry},
         };
+        $self->_notify_waiters($channel);
     }
 }
 
@@ -263,6 +284,13 @@ async sub flush {
     $self->{presence} = {};
     $self->{history} = {};
     $self->{delayed} = [];
+
+    # Cancel all pending next_message waiters
+    for my $waiters (values %{$self->{_waiters}}) {
+        $_->cancel for grep { !$_->is_ready } @$waiters;
+    }
+    $self->{_waiters} = {};
+
     return 1;
 }
 
@@ -293,6 +321,11 @@ async sub cleanup {
     $self->{delayed} = [
         grep { $_->{target} ne $channel } @{$self->{delayed}}
     ];
+
+    # Cancel any pending next_message waiters
+    if (my $waiters = delete $self->{_waiters}{$channel}) {
+        $_->cancel for grep { !$_->is_ready } @$waiters;
+    }
 
     return 1;
 }
@@ -436,6 +469,38 @@ async sub scan_presence {
     my $next_cursor = ($cursor + $count < $total) ? $cursor + $count : 0;
 
     return ($next_cursor, @result);
+}
+
+# Core: next_message — wait for a message (condition variable pattern).
+# Returns a Future that resolves with the next message on $channel.
+# The Future may be cancelled to abort the wait.
+sub next_message {
+    my ($self, $channel) = @_;
+
+    my $result_f = Future->new;
+
+    # Fast path: check queue via poll; resolve immediately if message present.
+    # Slow path: register result_f as a waiter; _notify_waiters will poll and
+    # resolve it when a message arrives.
+    $self->poll($channel)->on_done(sub {
+        my ($msg) = @_;
+        if (defined $msg) {
+            $result_f->done($msg) unless $result_f->is_ready;
+            return;
+        }
+
+        # Queue was empty — register as waiter
+        push @{$self->{_waiters}{$channel}}, $result_f;
+
+        # On cancel: remove from waiters list
+        $result_f->on_cancel(sub {
+            my $list = $self->{_waiters}{$channel} or return;
+            @$list = grep { !$_->is_cancelled } @$list;
+            delete $self->{_waiters}{$channel} unless @$list;
+        });
+    });
+
+    return $result_f;
 }
 
 # Delayed: send_delayed

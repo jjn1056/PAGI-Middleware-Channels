@@ -19,6 +19,7 @@ my @ABSTRACT = qw(
     psubscribe punsubscribe track untrack list_presence
     count_presence scan_presence
     send_delayed publish_delayed subscribe_with_history
+    next_message
 );
 
 for my $method (@ABSTRACT) {
@@ -52,6 +53,13 @@ implementations croak; there is no shared behavior in this base class.
 =item send($channel, $message) -> Future
 
 =item poll($channel) -> Future($message | undef)
+
+=item next_message($channel) -> Future($message)
+
+Waits until a message is available on the channel, then returns it.
+Unlike C<poll>, which returns C<undef> immediately when the queue is
+empty, C<next_message> blocks (asynchronously) until a message arrives.
+The returned Future may be cancelled to abort the wait.
 
 =item subscribe($channel, $topic, %opts) -> Future
 
