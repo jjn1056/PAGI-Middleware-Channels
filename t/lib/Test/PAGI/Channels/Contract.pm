@@ -844,6 +844,19 @@ sub _test_delayed {
             }
         );
     };
+
+    subtest 'process_delayed returns count of processed messages' => sub {
+        my $backend = $factory->();
+
+        _run { $backend->send_delayed('ch1', { type => 'msg', n => 1 }, 0.05) };
+        _run { $backend->send_delayed('ch2', { type => 'msg', n => 2 }, 0.05) };
+        _run { $backend->send_delayed('ch3', { type => 'msg', n => 3 }, 0.05) };
+
+        _run { Future::IO->sleep(0.1) };
+
+        my $count = _run { $backend->process_delayed() };
+        is($count, 3, 'processed 3 messages');
+    };
 }
 sub _test_pattern_subs {
     my ($factory) = @_;

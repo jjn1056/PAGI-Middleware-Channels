@@ -551,6 +551,7 @@ async sub process_delayed {
     my ($self) = @_;
 
     my $now = Time::HiRes::time();
+    my $processed = 0;
 
     while (@{$self->{delayed}} && $self->{delayed}[0]{deliver_at} <= $now) {
         my $entry = shift @{$self->{delayed}};
@@ -561,9 +562,11 @@ async sub process_delayed {
         elsif ($entry->{type} eq 'publish') {
             await $self->publish($entry->{target}, $entry->{message});
         }
+
+        $processed++;
     }
 
-    return 1;
+    return $processed;
 }
 
 # History: subscribe_with_history
