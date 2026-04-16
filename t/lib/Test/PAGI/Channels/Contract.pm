@@ -564,7 +564,78 @@ sub _test_presence {
         is(scalar @entries, 0, 'no entries');
     };
 }
-sub _test_history         { ok(1, 'placeholder - Task 1.4') }
+sub _test_history {
+    my ($factory) = @_;
+
+    subtest 'subscribe_with_history receives last N messages' => sub {
+        my $backend = $factory->(history_size => 10);
+
+        # Publish some messages first (no subscribers yet)
+        _run { $backend->publish('chat.room', { type => 'msg', n => 1 }) };
+        _run { $backend->publish('chat.room', { type => 'msg', n => 2 }) };
+        _run { $backend->publish('chat.room', { type => 'msg', n => 3 }) };
+
+        # Now subscribe with history
+        _run { $backend->subscribe_with_history('ch1', 'chat.room', 10) };
+
+        # Should have received historical messages
+        is(_run { $backend->poll('ch1') }->{n}, 1, 'history msg 1');
+        is(_run { $backend->poll('ch1') }->{n}, 2, 'history msg 2');
+        is(_run { $backend->poll('ch1') }->{n}, 3, 'history msg 3');
+        is(_run { $backend->poll('ch1') }, undef, 'no more');
+    };
+
+    subtest 'history respects count limit' => sub {
+        my $backend = $factory->(history_size => 100);
+
+        for my $n (1..10) {
+            _run { $backend->publish('room', { type => 'msg', n => $n }) };
+        }
+
+        # Request only last 3
+        _run { $backend->subscribe_with_history('ch1', 'room', 3) };
+
+        is(_run { $backend->poll('ch1') }->{n}, 8, 'only last 3: msg 8');
+        is(_run { $backend->poll('ch1') }->{n}, 9, 'only last 3: msg 9');
+        is(_run { $backend->poll('ch1') }->{n}, 10, 'only last 3: msg 10');
+        is(_run { $backend->poll('ch1') }, undef, 'no more');
+    };
+
+    subtest 'history buffer respects global limit' => sub {
+        my $backend = $factory->(history_size => 5);
+
+        for my $n (1..10) {
+            _run { $backend->publish('room', { type => 'msg', n => $n }) };
+        }
+
+        # Only last 5 are retained
+        _run { $backend->subscribe_with_history('ch1', 'room', 100) };
+
+        is(_run { $backend->poll('ch1') }->{n}, 6, 'buffer only has 6-10');
+        is(_run { $backend->poll('ch1') }->{n}, 7, 'msg 7');
+        is(_run { $backend->poll('ch1') }->{n}, 8, 'msg 8');
+        is(_run { $backend->poll('ch1') }->{n}, 9, 'msg 9');
+        is(_run { $backend->poll('ch1') }->{n}, 10, 'msg 10');
+        is(_run { $backend->poll('ch1') }, undef, 'no more');
+    };
+
+    subtest 'new messages after subscribe arrive normally' => sub {
+        my $backend = $factory->(history_size => 10);
+
+        _run { $backend->publish('room', { type => 'history', n => 1 }) };
+        _run { $backend->subscribe_with_history('ch1', 'room', 10) };
+
+        # Consume history
+        _run { $backend->poll('ch1') };
+
+        # New message
+        _run { $backend->publish('room', { type => 'live', n => 2 }) };
+
+        my $msg = _run { $backend->poll('ch1') };
+        is($msg->{type}, 'live', 'live message received');
+        is($msg->{n}, 2, 'correct content');
+    };
+}
 sub _test_delayed         { ok(1, 'placeholder - Task 1.5') }
 sub _test_pattern_subs    { ok(1, 'placeholder - Task 1.6') }
 
