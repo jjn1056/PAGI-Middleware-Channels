@@ -154,7 +154,7 @@ async sub send {
     my $len = await $self->{_redis}->llen($key);
 
     if ($len >= $self->{capacity}) {
-        return Future->fail('ChannelFull', 'channel', $channel);
+        await Future->fail('ChannelFull', 'channel', $channel);
     }
 
     my $json = encode_json($message);
