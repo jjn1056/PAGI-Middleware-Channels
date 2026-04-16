@@ -636,7 +636,104 @@ sub _test_history {
         is($msg->{n}, 2, 'correct content');
     };
 }
-sub _test_delayed         { ok(1, 'placeholder - Task 1.5') }
+sub _test_delayed {
+    my ($factory) = @_;
+
+    subtest 'send_delayed delivers after delay' => sub {
+        my $backend = $factory->();
+
+        # Send with 0.1 second delay
+        _run { $backend->send_delayed('ch1', { type => 'delayed' }, 0.1) };
+
+        # Not delivered immediately
+        is(_run { $backend->poll('ch1') }, undef, 'not delivered immediately');
+
+        # Process delayed messages
+        _run { $backend->process_delayed() };
+        is(_run { $backend->poll('ch1') }, undef, 'still not delivered');
+
+        # Wait and process again
+        _run { Future::IO->sleep(0.15) };
+        _run { $backend->process_delayed() };
+
+        my $msg = _run { $backend->poll('ch1') };
+        is($msg->{type}, 'delayed', 'delivered after delay');
+    };
+
+    subtest 'publish_delayed delivers to all subscribers after delay' => sub {
+        my $backend = $factory->();
+
+        _run { $backend->subscribe('ch1', 'room') };
+        _run { $backend->subscribe('ch2', 'room') };
+
+        _run { $backend->publish_delayed('room', { type => 'broadcast' }, 0.1) };
+
+        # Not delivered immediately
+        is(_run { $backend->poll('ch1') }, undef, 'ch1 not delivered yet');
+        is(_run { $backend->poll('ch2') }, undef, 'ch2 not delivered yet');
+
+        # Wait and process
+        _run { Future::IO->sleep(0.15) };
+        _run { $backend->process_delayed() };
+
+        is(_run { $backend->poll('ch1') }->{type}, 'broadcast', 'ch1 received');
+        is(_run { $backend->poll('ch2') }->{type}, 'broadcast', 'ch2 received');
+    };
+
+    subtest 'multiple delayed messages in order' => sub {
+        my $backend = $factory->();
+
+        _run { $backend->send_delayed('ch', { type => 'msg', n => 1 }, 0.05) };
+        _run { $backend->send_delayed('ch', { type => 'msg', n => 2 }, 0.15) };
+        _run { $backend->send_delayed('ch', { type => 'msg', n => 3 }, 0.10) };
+
+        # Wait for all
+        _run { Future::IO->sleep(0.2) };
+        _run { $backend->process_delayed() };
+
+        # Should arrive in delay order: 1, 3, 2
+        is(_run { $backend->poll('ch') }->{n}, 1, 'first (0.05s)');
+        is(_run { $backend->poll('ch') }->{n}, 3, 'second (0.10s)');
+        is(_run { $backend->poll('ch') }->{n}, 2, 'third (0.15s)');
+    };
+
+    subtest 'poll() delivers due delayed messages without manual pump' => sub {
+        my $backend = $factory->();
+
+        _run { $backend->send_delayed('ch1', { type => 'reminder' }, 0.05) };
+
+        # Nothing before the delay elapses
+        is(_run { $backend->poll('ch1') }, undef, 'not delivered before delay');
+
+        # Wait past the delay
+        _run { Future::IO->sleep(0.1) };
+
+        # poll() itself should pump the delayed queue — no manual process_delayed
+        my $msg = _run { $backend->poll('ch1') };
+        is($msg->{type}, 'reminder', 'delayed message pumped by poll()');
+    };
+
+    subtest 'cleanup removes delayed messages targeting the channel' => sub {
+        my $backend = $factory->();
+
+        _run { $backend->send_delayed('ch1', { type => 'delayed1' }, 0.1) };
+        _run { $backend->send_delayed('ch2', { type => 'delayed2' }, 0.1) };
+        _run { $backend->publish_delayed('topic1', { type => 'pub' }, 0.1) };
+
+        # Subscribe ch3 to topic1 so we can observe the publish-delayed survives
+        _run { $backend->subscribe('ch3', 'topic1') };
+
+        _run { $backend->cleanup('ch1') };
+
+        # Wait past delay, pump
+        _run { Future::IO->sleep(0.2) };
+        _run { $backend->process_delayed() };
+
+        is(_run { $backend->poll('ch1') }, undef, 'ch1 delayed removed by cleanup');
+        is(_run { $backend->poll('ch2') }->{type}, 'delayed2', 'ch2 delayed survives');
+        is(_run { $backend->poll('ch3') }->{type}, 'pub', 'publish_delayed survives');
+    };
+}
 sub _test_pattern_subs    { ok(1, 'placeholder - Task 1.6') }
 
 # Helper used by every subtest: synchronously run a Future-returning coderef.
