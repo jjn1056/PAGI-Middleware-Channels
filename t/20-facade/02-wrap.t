@@ -46,7 +46,7 @@ subtest 'wrapped receive interleaves channel messages' => sub {
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
         my $my_channel = $ch->channel_name;
 
         # Subscribe to a room
@@ -88,7 +88,7 @@ subtest 'cleanup on app exit' => sub {
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
         $my_channel = $ch->channel_name;
 
         await $ch->subscribe('room');

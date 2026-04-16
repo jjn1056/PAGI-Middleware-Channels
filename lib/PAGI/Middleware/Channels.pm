@@ -115,7 +115,7 @@ PAGI::Middleware::Channels - Cross-process messaging middleware for PAGI applica
     my $app = $channels->wrap(async sub {
         my ($scope, $receive, $send) = @_;
 
-        my $ch = PAGI::Channel->from_scope($scope);
+        my $ch = PAGI::Channel->from($scope);
         my $my_channel = $ch->channel_name;
 
         await $ch->subscribe("chat.room1",
@@ -136,7 +136,7 @@ The middleware wraps your PAGI app and injects two scope keys:
 
 =over 4
 
-=item * C<< $scope->{'pagi.channels'} >> — a L<PAGI::Channel> handle for this connection. Use C<< PAGI::Channel->from_scope($scope) >> to retrieve it.
+=item * C<< $scope->{'pagi.channels'} >> — a L<PAGI::Channel> handle for this connection. Use C<< PAGI::Channel->from($scope) >> to retrieve it.
 
 =item * C<< $scope->{'pagi.channel'} >> — this connection's unique channel name.
 

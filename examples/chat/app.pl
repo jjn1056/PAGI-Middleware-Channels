@@ -40,7 +40,7 @@ async sub handle_websocket {
     my ($scope, $receive, $send) = @_;
 
     my $ws = PAGI::WebSocket->new($scope, $receive, $send);
-    my $ch = PAGI::Channel->from_scope($scope);
+    my $ch = PAGI::Channel->from($ws);
     my $my_channel = $ch->channel_name;
 
     # Room from path param, username from query string
