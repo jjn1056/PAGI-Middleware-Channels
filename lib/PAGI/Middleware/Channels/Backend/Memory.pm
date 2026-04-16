@@ -86,27 +86,6 @@ sub _notify_waiters {
     }
 }
 
-# Helper to convert pattern to regex
-sub _pattern_to_regex {
-    my ($self, $pattern) = @_;
-
-    # Escape special regex chars except our wildcards
-    my $regex = quotemeta($pattern);
-
-    # ** matches zero or more segments (including dots)
-    # When ** follows a dot (e.g., "foo.**"), make the dot optional
-    # so "foo.**" matches "foo", "foo.bar", "foo.bar.baz"
-    $regex =~ s/\\\.\\\*\\\*/(\\..*)?\$/g;
-
-    # Handle ** at the beginning or not preceded by a dot
-    $regex =~ s/\\\*\\\*/.*/g;
-
-    # * matches exactly one segment (no dots)
-    $regex =~ s/\\\*/[^.]+/g;
-
-    return qr/^$regex$/;
-}
-
 # PubSub: subscribe
 async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
@@ -162,13 +141,7 @@ async sub unsubscribe {
 # Helper for presence events
 async sub _broadcast_presence_event {
     my ($self, $topic, $event_type, $presence_data, $exclude_channel) = @_;
-
-    my $event = {
-        type     => $event_type,
-        topic    => $topic,
-        presence => $presence_data,
-    };
-
+    my $event = $self->_make_presence_event($topic, $event_type, $presence_data);
     await $self->publish($topic, $event, exclude => $exclude_channel);
 }
 
@@ -195,9 +168,7 @@ async sub publish {
     $self->_validate_channel($topic);
     $self->_validate_message($message);
 
-    my $exclude = $opts{exclude} // [];
-    $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
-    my %excluded = map { $_ => 1 } @$exclude;
+    my %excluded = %{ $self->_normalize_exclude($opts{exclude}) };
 
     my $now = Time::HiRes::time();
     my %delivered;  # Track to avoid duplicates

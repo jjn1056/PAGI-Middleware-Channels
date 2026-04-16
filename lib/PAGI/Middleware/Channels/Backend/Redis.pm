@@ -120,27 +120,6 @@ async sub _start_listener {
     }
 }
 
-# Helper to convert pattern to regex (same as Memory backend)
-sub _pattern_to_regex {
-    my ($self, $pattern) = @_;
-
-    # Escape special regex chars except our wildcards
-    my $regex = quotemeta($pattern);
-
-    # ** matches zero or more segments (including dots)
-    # When ** follows a dot (e.g., "foo.**"), make the dot optional
-    # so "foo.**" matches "foo", "foo.bar", "foo.bar.baz"
-    $regex =~ s/\\\.\\\*\\\*/(\\..*)?\$/g;
-
-    # Handle ** at the beginning or not preceded by a dot
-    $regex =~ s/\\\*\\\*/.*/g;
-
-    # * matches exactly one segment (no dots)
-    $regex =~ s/\\\*/[^.]+/g;
-
-    return qr/^$regex$/;
-}
-
 sub _topic_matches_pattern {
     my ($self, $topic, $pattern) = @_;
     my $regex = $self->_pattern_to_regex($pattern);
@@ -256,11 +235,9 @@ async sub subscribe {
         await $self->track($topic, $presence_data, $channel);
 
         # Broadcast join event (but we need to check if this is a new subscription)
-        await $self->publish($topic, {
-            type     => 'presence.join',
-            topic    => $topic,
-            presence => $presence_data,
-        }, exclude => $channel);
+        await $self->publish($topic,
+            $self->_make_presence_event($topic, 'presence.join', $presence_data),
+            exclude => $channel);
     }
 
     return 1;
@@ -284,11 +261,9 @@ async sub unsubscribe {
         await $self->{_redis}->hdel($pkey, $channel);
 
         # Broadcast leave event
-        await $self->publish($topic, {
-            type     => 'presence.leave',
-            topic    => $topic,
-            presence => $presence_data,
-        }, exclude => $channel);
+        await $self->publish($topic,
+            $self->_make_presence_event($topic, 'presence.leave', $presence_data),
+            exclude => $channel);
     }
 
     return 1;
@@ -324,9 +299,7 @@ async sub punsubscribe {
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
 
-    my $exclude = $opts{exclude} // [];
-    $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
-    my %excluded = map { $_ => 1 } @$exclude;
+    my %excluded = %{ $self->_normalize_exclude($opts{exclude}) };
 
     my %delivered;  # Track to avoid duplicates
 
@@ -435,11 +408,9 @@ async sub cleanup {
             await $self->{_redis}->hdel($pkey, $channel);
 
             # Broadcast leave event
-            await $self->publish($topic, {
-                type     => 'presence.leave',
-                topic    => $topic,
-                presence => $presence_data,
-            }, exclude => $channel);
+            await $self->publish($topic,
+                $self->_make_presence_event($topic, 'presence.leave', $presence_data),
+                exclude => $channel);
         }
 
         await $self->{_redis}->srem($gkey, $channel);

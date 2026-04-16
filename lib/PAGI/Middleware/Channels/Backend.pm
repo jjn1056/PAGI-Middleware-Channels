@@ -53,6 +53,44 @@ sub _validate_message {
     die "InvalidMessage: missing type"  unless defined $message->{type};
 }
 
+# Glob-pattern to regex compilation. Used by PatternSubs-capable backends
+# in both psubscribe (compile) and publish (match). Lives on the base so
+# any backend can call it without depending on the PatternSubs role.
+#
+# Pattern syntax:
+#   *  matches exactly one segment (no dots)
+#   ** matches zero or more segments (including dots)
+#   When ** follows a dot, the dot is optional, so "foo.**" matches
+#   "foo", "foo.bar", "foo.bar.baz".
+sub _pattern_to_regex {
+    my ($self, $pattern) = @_;
+    my $regex = quotemeta($pattern);
+    $regex =~ s/\\\.\\\*\\\*/(\\..*)?\$/g;   # ".**" - dot optional
+    $regex =~ s/\\\*\\\*/.*/g;               # "**" anywhere else
+    $regex =~ s/\\\*/[^.]+/g;                # "*" - one segment
+    return qr/^$regex$/;
+}
+
+# Normalize the publish-time `exclude` option to a hash for fast lookup.
+# Accepts undef, scalar, or arrayref.
+sub _normalize_exclude {
+    my ($self, $exclude) = @_;
+    return {} unless defined $exclude;
+    $exclude = [$exclude] unless ref $exclude eq 'ARRAY';
+    return { map { $_ => 1 } @$exclude };
+}
+
+# Construct the standard presence-event hashref used in subscribe-with-presence
+# and unsubscribe-with-presence broadcasts.
+sub _make_presence_event {
+    my ($self, $topic, $type, $presence_data) = @_;
+    return {
+        type     => $type,             # 'presence.join' or 'presence.leave'
+        topic    => $topic,
+        presence => $presence_data,
+    };
+}
+
 my @ABSTRACT = qw(
     send poll subscribe unsubscribe publish flush cleanup
     psubscribe punsubscribe track untrack list_presence
