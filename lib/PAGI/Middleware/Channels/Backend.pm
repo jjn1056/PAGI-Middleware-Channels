@@ -53,6 +53,8 @@ sub _validate_message {
     die "InvalidMessage: missing type"  unless defined $message->{type};
 
     if ($self->{max_size}) {
+        # Lazy require: keeps this base JSON-free when max_size is disabled,
+        # so Memory-only users don't pay for JSON::MaybeXS.
         require JSON::MaybeXS;
         my $size = length(JSON::MaybeXS::encode_json($message));
         die "MessageTooLarge: $size bytes exceeds max_size $self->{max_size}"
