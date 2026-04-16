@@ -94,6 +94,11 @@ async sub scan_presence {
     return await $self->{backend}->scan_presence($topic, %opts);
 }
 
+async sub next_message {
+    my ($self, $channel) = @_;
+    return await $self->{backend}->next_message($channel);
+}
+
 # Django Channels compatibility aliases
 *group_add     = \&subscribe;
 *group_discard = \&unsubscribe;
@@ -289,6 +294,17 @@ behaviour). For the Memory backend, C<count> is exact.
 
 B<Note:> If members are added or removed between calls, pages may overlap
 or skip entries. This matches Redis SCAN's documented semantics.
+
+=head2 next_message
+
+    my $msg = await $ch->next_message($channel_name);
+
+Waits until a message is available on the given channel, then returns it.
+Unlike C<poll>, which returns C<undef> immediately when empty,
+C<next_message> blocks asynchronously until a message arrives. Used
+internally by the middleware for event-driven receive interleaving.
+
+The returned Future may be cancelled to abort the wait.
 
 =head1 DJANGO CHANNELS COMPATIBILITY
 

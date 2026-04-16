@@ -4,7 +4,6 @@ use warnings;
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Future;
-use Future::IO;
 
 our $VERSION = '0.001';
 
@@ -35,21 +34,19 @@ sub wrap {
         });
 
         my $wrapped_receive = async sub {
+            # Fast path: channel message already queued
             if (my $msg = await $self->backend->poll($channel_name)) {
                 return $msg;
             }
 
             my $protocol_f = $receive->();
+            my $channel_f  = $self->backend->next_message($channel_name);
 
-            while (!$protocol_f->is_ready) {
-                await Future::IO->sleep(0.1);
+            await Future->wait_any($protocol_f, $channel_f);
 
-                if (my $msg = await $self->backend->poll($channel_name)) {
-                    return $msg;
-                }
-            }
-
-            return $protocol_f->get;
+            return $channel_f->is_done
+                ? $channel_f->get
+                : $protocol_f->get;
         };
 
         my $err;
