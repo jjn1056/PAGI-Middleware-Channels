@@ -1010,6 +1010,16 @@ This task ports the bodies of `t/10-memory/01-core.t`, `t/10-memory/02-pubsub.t`
 
 The porting is mechanical: replace `PAGI::Middleware::Channels::Backend::Memory->new(...)` with `$factory->()` for each `$backend` construction. The factory returns a fresh, already-flushed instance, so any per-test setup like `$backend->flush` from the Redis tests is unnecessary.
 
+- [ ] **Step 0: Add `_run(&)` forward declaration**
+
+Perl prototypes only apply to calls *parsed after* the declaration. The `sub _run(&)` definition lives at the bottom of `Contract.pm`, so the `_run { ... }` block-form calls we're about to paste into the `_test_*` subs above it would fail to parse. Add this line in `Contract.pm` immediately after `our @EXPORT_OK = qw(run_contract_tests);` (around line 12):
+
+```perl
+sub _run(&);
+```
+
+That's a forward declaration with prototype. With it in place, every subsequent `_run { ... }` call parses correctly regardless of file position.
+
 - [ ] **Step 1: Port `_test_core_send_poll`, `_test_core_fifo`, `_test_core_capacity`**
 
 Replace the placeholder stubs with the contents of the three subtests in `t/10-memory/01-core.t:11-58`. Each ported sub takes `($factory)` and reads:
