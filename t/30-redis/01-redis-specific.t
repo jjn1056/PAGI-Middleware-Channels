@@ -38,63 +38,6 @@ SKIP: {
         run { $backend_b->flush() };
     };
 
-    subtest 'process_delayed returns count of processed messages' => sub {
-        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
-            redis => make_redis(),
-        );
-        run { $backend->flush() };
-
-        run { $backend->send_delayed('ch', { type => 'msg', n => 1 }, 0.05) };
-        run { $backend->send_delayed('ch', { type => 'msg', n => 2 }, 0.05) };
-        run { $backend->send_delayed('ch', { type => 'msg', n => 3 }, 0.05) };
-
-        # Wait for all
-        run { Future::IO->sleep(0.1) };
-
-        my $count = run { $backend->process_delayed() };
-        is($count, 3, 'processed 3 messages');
-
-        run { $backend->flush() };
-    };
-
-    subtest 'history does not include presence events' => sub {
-        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
-            redis        => make_redis(),
-            history_size => 10,
-        );
-        run { $backend->flush() };
-
-        # Regular message
-        run { $backend->publish('room', { type => 'msg', n => 1 }) };
-
-        # Presence event (should not be stored in history)
-        $backend->set_channel_id('user1');
-        run { $backend->subscribe('user1', 'room', presence => { name => 'User1' }) };
-
-        # Another regular message
-        run { $backend->publish('room', { type => 'msg', n => 2 }) };
-
-        # Drain user1's queue
-        while (run { $backend->poll('user1') }) {}
-
-        # New subscriber with history
-        run { $backend->subscribe_with_history('ch2', 'room', 10) };
-
-        # Should only get the regular messages, not presence events
-        my @msgs;
-        while (my $m = run { $backend->poll('ch2') }) {
-            push @msgs, $m;
-        }
-
-        # Filter out presence events we might have received during subscribe
-        @msgs = grep { $_->{type} !~ /^presence\./ } @msgs;
-
-        is(scalar @msgs, 2, 'got 2 history messages');
-        is($msgs[0]->{n}, 1, 'first history message');
-        is($msgs[1]->{n}, 2, 'second history message');
-
-        run { $backend->flush() };
-    };
 }
 
 done_testing;

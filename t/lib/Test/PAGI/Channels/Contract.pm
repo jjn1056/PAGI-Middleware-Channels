@@ -607,6 +607,34 @@ sub _test_presence {
         is($cursor, 0, 'cursor 0');
         is(scalar @entries, 0, 'no entries');
     };
+
+    subtest 'cleanup removes presence and broadcasts leave' => sub {
+        my $backend = $factory->();
+
+        # ch2 subscribes first to receive events
+        $backend->set_channel_id('ch2');
+        _run { $backend->subscribe('ch2', 'room', presence => { user => 'bob' }) };
+
+        # ch1 subscribes with presence
+        $backend->set_channel_id('ch1');
+        _run { $backend->subscribe('ch1', 'room', presence => { user => 'alice' }) };
+
+        # Consume join event
+        _run { $backend->poll('ch2') };
+
+        # Cleanup ch1
+        _run { $backend->cleanup('ch1') };
+
+        # ch2 should get leave event
+        my $event = _run { $backend->poll('ch2') };
+        is($event->{type}, 'presence.leave', 'leave event sent');
+        is($event->{presence}{user}, 'alice', 'correct user');
+
+        # Presence list should not include ch1
+        my @presence = _run { $backend->list_presence('room') };
+        is(scalar @presence, 1, 'only one remaining');
+        is($presence[0]->{user}, 'bob', 'bob remains');
+    };
 }
 sub _test_history {
     my ($factory) = @_;
@@ -678,6 +706,39 @@ sub _test_history {
         my $msg = _run { $backend->poll('ch1') };
         is($msg->{type}, 'live', 'live message received');
         is($msg->{n}, 2, 'correct content');
+    };
+
+    subtest 'history does not include presence events' => sub {
+        my $backend = $factory->(history_size => 10);
+
+        # Regular message
+        _run { $backend->publish('room', { type => 'msg', n => 1 }) };
+
+        # Presence event (should not be stored in history)
+        $backend->set_channel_id('user1');
+        _run { $backend->subscribe('user1', 'room', presence => { name => 'User1' }) };
+
+        # Another regular message
+        _run { $backend->publish('room', { type => 'msg', n => 2 }) };
+
+        # Drain user1's queue
+        while (_run { $backend->poll('user1') }) {}
+
+        # New subscriber with history
+        _run { $backend->subscribe_with_history('ch2', 'room', 10) };
+
+        # Should only get the regular messages, not presence events
+        my @msgs;
+        while (my $m = _run { $backend->poll('ch2') }) {
+            push @msgs, $m;
+        }
+
+        # Filter out presence events we might have received during subscribe
+        @msgs = grep { $_->{type} !~ /^presence\./ } @msgs;
+
+        is(scalar @msgs, 2, 'got 2 history messages');
+        is($msgs[0]->{n}, 1, 'first history message');
+        is($msgs[1]->{n}, 2, 'second history message');
     };
 }
 sub _test_delayed {
