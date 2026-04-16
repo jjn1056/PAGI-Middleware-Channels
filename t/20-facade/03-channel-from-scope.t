@@ -90,4 +90,38 @@ subtest 'count_presence delegates to backend' => sub {
     is($got_count, 1, 'count_presence returns 1');
 };
 
+
+subtest 'scan_presence delegates to backend' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new();
+
+    my $channels = PAGI::Middleware::Channels->new(
+        backend => $backend,
+    );
+
+    my @all;
+    my $inner_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        my $ch = PAGI::Channel->from_scope($scope);
+
+        for my $i (1..3) {
+            $backend->set_channel_id("scan.u$i");
+            await $backend->subscribe("scan.u$i", 'scan.facade.room',
+                presence => { n => $i });
+        }
+
+        my $cursor = 0;
+        do {
+            my @batch;
+            ($cursor, @batch) = await $ch->scan_presence(
+                'scan.facade.room', cursor => $cursor, count => 10);
+            push @all, @batch;
+        } while ($cursor);
+    };
+
+    my $wrapped = $channels->wrap($inner_app);
+    run { $wrapped->({ type => 'websocket' }, async sub { { type => 'websocket.disconnect' } }, async sub { }) };
+
+    is(scalar @all, 3, 'scan_presence via facade returns all 3 entries');
+};
+
 done_testing;

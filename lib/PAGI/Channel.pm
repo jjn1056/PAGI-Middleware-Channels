@@ -89,6 +89,11 @@ async sub count_presence {
     return await $self->{backend}->count_presence($topic);
 }
 
+async sub scan_presence {
+    my ($self, $topic, %opts) = @_;
+    return await $self->{backend}->scan_presence($topic, %opts);
+}
+
 # Django Channels compatibility aliases
 *group_add     = \&subscribe;
 *group_discard = \&unsubscribe;
@@ -250,6 +255,40 @@ Explicitly track presence without subscribing — useful for workers.
 =head2 list_presence
 
     my @users = await $ch->list_presence($topic);
+    my @users = await $ch->list_presence($topic, limit => 100);
+
+Returns presence data for all current subscribers to C<$topic>. Each element
+is the hashref that was passed to C<subscribe> or C<track>.
+
+B<Intended for small groups> (chat rooms, lobbies, game sessions). For large
+topics, use C<count_presence> to get a count or C<scan_presence> to paginate.
+
+If C<limit> is provided and the number of members exceeds it, the method
+croaks with a message directing you to C<count_presence> or C<scan_presence>.
+
+=head2 count_presence
+
+    my $n = await $ch->count_presence($topic);
+
+Returns the number of members currently tracked in C<$topic>. O(1) in both
+backends — safe to call on large topics.
+
+=head2 scan_presence
+
+    my ($cursor, @batch) = await $ch->scan_presence($topic, cursor => 0, count => 100);
+    while ($cursor) {
+        ($cursor, @batch) = await $ch->scan_presence($topic, cursor => $cursor, count => 100);
+        # process @batch ...
+    }
+
+Cursor-based iteration over presence data. Start with C<cursor =E<gt> 0>;
+keep calling until the returned cursor is C<0> (meaning iteration is complete).
+
+C<count> is a hint — actual batch size may be smaller or larger (Redis SCAN
+behaviour). For the Memory backend, C<count> is exact.
+
+B<Note:> If members are added or removed between calls, pages may overlap
+or skip entries. This matches Redis SCAN's documented semantics.
 
 =head1 DJANGO CHANNELS COMPATIBILITY
 
