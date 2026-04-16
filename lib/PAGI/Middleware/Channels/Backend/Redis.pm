@@ -34,6 +34,14 @@ sub new {
         group_expiry => $args{group_expiry} // DEFAULT_GROUP_EXPIRY,
         max_size     => $args{max_size}     // DEFAULT_MAX_SIZE,
         history_size => $args{history_size} // DEFAULT_HISTORY_SIZE,
+
+        # Subscriber connection (for next_message notification)
+        _subscriber      => undef,  # Dedicated Async::Redis for pub/sub
+        _subscription    => undef,  # Async::Redis::Subscription object
+        _listener_f      => undef,  # Background listener Future
+        _waiters         => {},     # channel -> [ Future, ... ] (signal futures for _notify_waiters)
+        _active_fs       => {},     # channel -> [ Future, ... ] (outer futures for flush/cleanup)
+        _notify_poll_fs  => [],     # In-flight poll() futures (kept alive by _notify_waiters)
     }, $class;
 }
 
@@ -56,6 +64,74 @@ sub _presence_key { 'p:'   . $_[1] }
 sub _history_key  { 'h:'   . $_[1] }
 sub _pattern_key  { 'pat:' . $_[1] }
 sub _delayed_key  { 'delayed' }
+
+# Notification channel name — must include prefix manually because
+# PUBLISH/SUBSCRIBE are NOT auto-prefixed by Async::Redis.
+sub _notify_channel { $_[0]->_redis_prefix . 'notify:' . $_[1] }
+
+# Resolve any futures waiting for messages on this channel.
+# Called by the background listener after a pub/sub notification arrives.
+# Each signal_f is a plain Future awaited inside next_message(); we poll
+# for each one and resolve it with the message when poll completes.
+# The poll Futures are kept alive in _notify_poll_fs to prevent GC.
+sub _notify_waiters {
+    my ($self, $channel) = @_;
+    my $waiters = delete $self->{_waiters}{$channel} or return;
+    for my $signal_f (@$waiters) {
+        next if $signal_f->is_ready;
+        my $poll_f = $self->poll($channel);
+        push @{$self->{_notify_poll_fs}}, $poll_f;
+        $poll_f->on_done(sub {
+            my $msg = $_[0];
+            $signal_f->done($msg) unless $signal_f->is_ready;
+            # Remove this poll future from the alive-list
+            my $list = $self->{_notify_poll_fs};
+            @$list = grep { $_ != $poll_f } @$list if $list;
+        });
+    }
+}
+
+# Lazily create a dedicated subscriber connection and start the listener.
+async sub _ensure_subscriber {
+    my ($self) = @_;
+    return if $self->{_subscriber};
+
+    my $r = $self->{_redis};
+    require Async::Redis;
+    my $sub = Async::Redis->new(
+        host      => $r->{host},
+        port      => $r->{port},
+        path      => $r->{path},
+        password  => $r->{password},
+        username  => $r->{username},
+        database  => $r->{database},
+        tls       => $r->{tls},
+        reconnect => $r->{reconnect} // 0,
+    );
+    await $sub->connect;
+    $self->{_subscriber} = $sub;
+
+    # PSUBSCRIBE to all notification channels for this prefix
+    my $pattern = $self->_redis_prefix . 'notify:*';
+    $self->{_subscription} = await $sub->psubscribe($pattern);
+
+    # Start background listener (fire-and-forget; stored to prevent GC)
+    $self->{_listener_f} = $self->_start_listener;
+}
+
+# Background loop: receive pub/sub notifications and wake waiters.
+async sub _start_listener {
+    my ($self) = @_;
+    my $sub = $self->{_subscription} or return;
+    my $prefix_re = quotemeta($self->_redis_prefix . 'notify:');
+
+    while (my $msg = await $sub->next) {
+        # msg->{channel} = '<prefix>notify:<channel_name>'
+        my ($channel) = $msg->{channel} =~ /^${prefix_re}(.+)$/;
+        next unless defined $channel;
+        $self->_notify_waiters($channel);
+    }
+}
 
 # Helper to convert pattern to regex (same as Memory backend)
 sub _pattern_to_regex {
@@ -95,6 +171,7 @@ async sub _deliver_to_channel {
         my $json = encode_json($message);
         await $self->{_redis}->rpush($qkey, $json);
         await $self->{_redis}->expire($qkey, $self->{expiry});
+        await $self->{_redis}->publish($self->_notify_channel($channel), '1');
         return 1;
     }
     return 0;  # Dropped due to full queue
@@ -114,6 +191,7 @@ async sub send {
     my $json = encode_json($message);
     await $self->{_redis}->rpush($key, $json);
     await $self->{_redis}->expire($key, $self->{expiry});
+    await $self->{_redis}->publish($self->_notify_channel($channel), '1');
 
     return 1;
 }
@@ -130,6 +208,52 @@ async sub poll {
 
     return undef unless defined $json;
     return decode_json($json);
+}
+
+# Core: next_message — wait for a message.
+# Returns an IO::Async::Future (from async sub) that the caller can await.
+#
+# Two-level tracking:
+#  _waiters:   inner signal Futures resolved by _notify_waiters on notification
+#  _active_fs: outer IO::Async::Futures cancelled by flush() and cleanup()
+#
+# Cancelling an outer future propagates inward to the awaited signal future
+# (Future::AsyncAwait semantics), so flush/cleanup only needs to cancel the
+# outer futures.
+sub next_message {
+    my ($self, $channel) = @_;
+
+    # Build an async closure that does the actual waiting.
+    my $outer_f = (async sub {
+        my $msg = await $self->poll($channel);
+        return $msg if defined $msg;
+
+        # Ensure the subscriber connection and background listener are running.
+        await $self->_ensure_subscriber;
+
+        # Register an inner signal Future; _notify_waiters resolves it with
+        # the message when a pub/sub notification arrives.
+        my $signal_f = Future->new;
+        push @{$self->{_waiters}{$channel}}, $signal_f;
+
+        $signal_f->on_cancel(sub {
+            my $list = $self->{_waiters}{$channel} or return;
+            @$list = grep { !$_->is_cancelled } @$list;
+            delete $self->{_waiters}{$channel} unless @$list;
+        });
+
+        return await $signal_f;
+    })->();
+
+    # Track the outer future so flush() and cleanup() can cancel it.
+    push @{$self->{_active_fs}{$channel}}, $outer_f;
+    $outer_f->on_ready(sub {
+        my $list = $self->{_active_fs}{$channel} or return;
+        @$list = grep { !$_->is_ready } @$list;
+        delete $self->{_active_fs}{$channel} unless @$list;
+    });
+
+    return $outer_f;
 }
 
 # Subscribe
@@ -276,6 +400,17 @@ async sub flush {
     my $prefix = $self->_redis_prefix;
     my $keys_ref = await $self->{_redis}->keys($prefix . '*');
     my @abs_keys = ref $keys_ref eq 'ARRAY' ? @$keys_ref : ();
+
+    # Cancel all pending next_message futures (outer and inner)
+    for my $futures (values %{$self->{_active_fs}}) {
+        $_->cancel for grep { !$_->is_ready } @$futures;
+    }
+    $self->{_active_fs} = {};
+    for my $waiters (values %{$self->{_waiters}}) {
+        $_->cancel for grep { !$_->is_ready } @$waiters;
+    }
+    $self->{_waiters} = {};
+
     return 1 unless @abs_keys;
 
     # Strip prefix so Async::Redis re-applies it exactly once on DEL.
@@ -325,6 +460,14 @@ async sub cleanup {
 
     # Remove pattern subscriptions
     await $self->{_redis}->del($self->_pattern_key($channel));
+
+    # Cancel any pending next_message futures for this channel
+    if (my $futures = delete $self->{_active_fs}{$channel}) {
+        $_->cancel for grep { !$_->is_ready } @$futures;
+    }
+    if (my $waiters = delete $self->{_waiters}{$channel}) {
+        $_->cancel for grep { !$_->is_ready } @$waiters;
+    }
 
     return 1;
 }
