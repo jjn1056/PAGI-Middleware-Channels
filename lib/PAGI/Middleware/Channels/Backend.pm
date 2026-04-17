@@ -101,11 +101,9 @@ sub _make_presence_event {
 }
 
 my @ABSTRACT = qw(
-    send poll subscribe unsubscribe publish flush cleanup
-    psubscribe punsubscribe track untrack list_presence
-    count_presence scan_presence
-    send_delayed publish_delayed subscribe_with_history
-    next_message
+    send poll next_message
+    subscribe unsubscribe publish
+    flush cleanup
 );
 
 for my $method (@ABSTRACT) {
