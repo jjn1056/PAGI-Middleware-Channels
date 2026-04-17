@@ -3,6 +3,11 @@ package PAGI::Middleware::Channels::Backend::Redis;
 use strict;
 use warnings;
 use parent 'PAGI::Middleware::Channels::Backend';
+use Role::Tiny::With;
+with 'PAGI::Middleware::Channels::Backend::Role::Presence',
+     'PAGI::Middleware::Channels::Backend::Role::History',
+     'PAGI::Middleware::Channels::Backend::Role::Delayed',
+     'PAGI::Middleware::Channels::Backend::Role::PatternSubs';
 use Future::AsyncAwait;
 use Future;
 use JSON::MaybeXS qw(encode_json decode_json);
@@ -21,7 +26,6 @@ sub new {
 
     # Redis-specific state
     $self->{_redis}          = $redis;
-    $self->{_channel_id}     = undef;
     $self->{_subscriber}     = undef;
     $self->{_subscription}   = undef;
     $self->{_listener_f}     = undef;
@@ -35,13 +39,6 @@ sub new {
 # Async::Redis does not prefix KEYS/SCAN patterns, so we prepend
 # the client's own prefix when we need namespace-scoped lookups.
 sub _redis_prefix { $_[0]->{_redis}{prefix} // '' }
-
-sub set_channel_id {
-    my ($self, $channel_id) = @_;
-    $self->{_channel_id} = $channel_id;
-}
-
-sub channel_id { shift->{_channel_id} }
 
 # Key helpers — structural only. Top-level namespace comes from
 # the Async::Redis instance's own prefix.
@@ -126,7 +123,8 @@ sub _topic_matches_pattern {
     return $topic =~ $regex;
 }
 
-# Helper to deliver to channel (checks capacity)
+# Helper to deliver to channel (checks capacity).
+# Required by Role::History's subscribe_with_history and Role::PatternSubs.
 async sub _deliver_to_channel {
     my ($self, $channel, $message) = @_;
 
@@ -141,6 +139,13 @@ async sub _deliver_to_channel {
         return 1;
     }
     return 0;  # Dropped due to full queue
+}
+
+# Required by Role::History's subscribe_with_history and Role::PatternSubs.
+# Delivers a message to a channel; returns a Future.
+sub _deliver {
+    my ($self, $channel, $message) = @_;
+    return $self->_deliver_to_channel($channel, $message);
 }
 
 # Core: send
@@ -168,9 +173,6 @@ async sub send {
 # Core: poll
 async sub poll {
     my ($self, $channel) = @_;
-
-    # Drain any due delayed messages into their target queues first
-    await $self->process_delayed;
 
     my $key = $self->_queue_key($channel);
     my $json = await $self->{_redis}->lpop($key);
@@ -240,56 +242,27 @@ sub next_message {
     return $outer_f;
 }
 
-# Subscribe
+# Subscribe — core group membership only.
+# Presence handling is managed by Role::Presence via around modifier.
 async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
-
     $self->_validate_channel($channel);
     $self->_validate_topic($topic);
 
     my $key = $self->_group_key($topic);
     await $self->{_redis}->sadd($key, $channel);
     await $self->{_redis}->expire($key, $self->{group_expiry});
-
-    # Handle presence option
-    if (my $presence_data = $opts{presence}) {
-        await $self->track($topic, $presence_data, $channel);
-
-        # Broadcast join event (but we need to check if this is a new subscription)
-        await $self->publish($topic,
-            $self->_make_presence_event($topic, 'presence.join', $presence_data),
-            exclude => $channel);
-    }
-
     return 1;
 }
 
-# Unsubscribe
+# Unsubscribe — core group membership only.
+# Presence handling is managed by Role::Presence via around modifier.
 async sub unsubscribe {
     my ($self, $channel, $topic) = @_;
-
     $self->_validate_channel($channel);
     $self->_validate_topic($topic);
-
-    # Get presence data before removing (for leave event)
-    my $pkey = $self->_presence_key($topic);
-    my $json = await $self->{_redis}->hget($pkey, $channel);
-    my $presence_data = $json ? decode_json($json) : undef;
-
-    # Remove from group
     my $key = $self->_group_key($topic);
     await $self->{_redis}->srem($key, $channel);
-
-    # Remove presence
-    if ($presence_data) {
-        await $self->{_redis}->hdel($pkey, $channel);
-
-        # Broadcast leave event
-        await $self->publish($topic,
-            $self->_make_presence_event($topic, 'presence.leave', $presence_data),
-            exclude => $channel);
-    }
-
     return 1;
 }
 
@@ -323,7 +296,9 @@ async sub punsubscribe {
     return 1;
 }
 
-# Publish
+# Publish — direct group members only.
+# History recording is managed by Role::History via around modifier.
+# Pattern dispatch is managed by Role::PatternSubs via around modifier.
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
 
@@ -334,14 +309,6 @@ async sub publish {
 
     my %delivered;  # Track to avoid duplicates
 
-    # Store in history buffer (if history enabled and not a presence event)
-    if ($self->{history_size} > 0 && $message->{type} !~ /^presence\./) {
-        my $history_key = $self->_history_key($topic);
-        await $self->{_redis}->rpush($history_key, encode_json($message));
-        await $self->{_redis}->ltrim($history_key, -$self->{history_size}, -1);
-        await $self->{_redis}->expire($history_key, $self->{group_expiry});
-    }
-
     # Direct group subscribers
     my $key = $self->_group_key($topic);
     my $members_ref = await $self->{_redis}->smembers($key);
@@ -351,31 +318,6 @@ async sub publish {
         next if $excluded{$channel};
         await $self->_deliver_to_channel($channel, $message);
         $delivered{$channel} = 1;
-    }
-
-    # Pattern subscribers - scan for all pattern keys
-    my $pattern_keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'pat:*');
-    my @pattern_keys = ref $pattern_keys_ref eq 'ARRAY' ? @$pattern_keys_ref : ();
-
-    for my $pkey (@pattern_keys) {
-        # Extract channel from key (KEYS returns absolute keys including
-        # the client's prefix; everything after 'pat:' is our channel name).
-        my ($channel) = $pkey =~ /pat:(.+)$/;
-        next unless $channel;
-        next if $excluded{$channel};
-        next if $delivered{$channel};  # Already delivered via exact match
-
-        # Use the relative key — Async::Redis will re-apply its prefix.
-        my $patterns_ref = await $self->{_redis}->smembers($self->_pattern_key($channel));
-        my @patterns = ref $patterns_ref eq 'ARRAY' ? @$patterns_ref : ();
-
-        for my $pattern (@patterns) {
-            if ($self->_topic_matches_pattern($topic, $pattern)) {
-                await $self->_deliver_to_channel($channel, $message);
-                $delivered{$channel} = 1;
-                last;  # Only deliver once per channel
-            }
-        }
     }
 
     return 1;
@@ -411,55 +353,23 @@ async sub flush {
     return 1;
 }
 
-# Cleanup channel
+# Cleanup channel — core state only.
+# Presence broadcast is managed by Role::Presence via around modifier.
+# Pattern cleanup is managed by Role::PatternSubs via around modifier.
+# Delayed cleanup is managed by Role::Delayed via around modifier.
 async sub cleanup {
     my ($self, $channel) = @_;
 
     # Remove queue
     await $self->{_redis}->del($self->_queue_key($channel));
 
-    # Remove from all groups (scan for membership) and handle presence
+    # Remove from all groups (no presence broadcast - Role::Presence handles)
     my $group_keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'g:*');
     my @group_keys = ref $group_keys_ref eq 'ARRAY' ? @$group_keys_ref : ();
-
     for my $abs_key (@group_keys) {
-        # KEYS returns absolute keys; extract topic after the 'g:' marker.
         my ($topic) = $abs_key =~ /g:(.+)$/;
         next unless $topic;
-
-        my $gkey = $self->_group_key($topic);  # relative; Async::Redis prefixes.
-        my $is_member = await $self->{_redis}->sismember($gkey, $channel);
-        next unless $is_member;
-
-        # Check for presence data
-        my $pkey = $self->_presence_key($topic);
-        my $json = await $self->{_redis}->hget($pkey, $channel);
-        if ($json) {
-            my $presence_data = decode_json($json);
-            await $self->{_redis}->hdel($pkey, $channel);
-
-            # Broadcast leave event
-            await $self->publish($topic,
-                $self->_make_presence_event($topic, 'presence.leave', $presence_data),
-                exclude => $channel);
-        }
-
-        await $self->{_redis}->srem($gkey, $channel);
-    }
-
-    # Remove pattern subscriptions
-    await $self->{_redis}->del($self->_pattern_key($channel));
-
-    # Sweep delayed ZSET: remove any pending send_delayed entries targeting this channel.
-    # publish_delayed entries (which target topics, not channels) are left untouched.
-    my $delayed_key = $self->_delayed_key;
-    my $delayed_ref = await $self->{_redis}->zrange($delayed_key, 0, -1);
-    my @delayed = ref $delayed_ref eq 'ARRAY' ? @$delayed_ref : ();
-    for my $json (@delayed) {
-        my $entry = decode_json($json);
-        if ($entry->{type} eq 'send' && $entry->{target} eq $channel) {
-            await $self->{_redis}->zrem($delayed_key, $json);
-        }
+        await $self->{_redis}->srem($self->_group_key($topic), $channel);
     }
 
     # Cancel any pending next_message futures for this channel
@@ -469,41 +379,46 @@ async sub cleanup {
     if (my $waiters = delete $self->{_waiters}{$channel}) {
         $_->cancel for grep { !$_->is_ready } @$waiters;
     }
-
     return 1;
 }
 
-# Presence: track
+# Presence: track ($topic, $channel, $presence_data)
 async sub track {
-    my ($self, $topic, $presence_data, $channel) = @_;
-
+    my ($self, $topic, $channel, $presence_data) = @_;
     $self->_validate_topic($topic);
 
-    $channel //= $self->{_channel_id}
-        or die "track() requires channel_id or set_channel_id() first";
-
     my $key = $self->_presence_key($topic);
-
     my $json = encode_json($presence_data);
     await $self->{_redis}->hset($key, $channel, $json);
     await $self->{_redis}->expire($key, $self->{group_expiry});
-
     return 1;
 }
 
-# Presence: untrack
+# Presence: untrack ($topic, $channel)
 async sub untrack {
-    my ($self, $topic) = @_;
-
+    my ($self, $topic, $channel) = @_;
     $self->_validate_topic($topic);
-
-    my $channel = $self->{_channel_id}
-        or die "untrack() requires set_channel_id() first";
-
     my $key = $self->_presence_key($topic);
     await $self->{_redis}->hdel($key, $channel);
-
     return 1;
+}
+
+# Presence: find all topics where $channel has a presence entry.
+# Required by Role::Presence.
+async sub _presence_topics_for_channel {
+    my ($self, $channel) = @_;
+    my @result;
+    my $keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'p:*');
+    my @keys = ref $keys_ref eq 'ARRAY' ? @$keys_ref : ();
+    for my $abs_key (@keys) {
+        my ($topic) = $abs_key =~ /p:(.+)$/;
+        next unless $topic;
+        my $pkey = $self->_presence_key($topic);
+        my $json = await $self->{_redis}->hget($pkey, $channel);
+        next unless defined $json;
+        push @result, [ $topic, decode_json($json) ];
+    }
+    return @result;
 }
 
 # Presence: list_presence
@@ -587,47 +502,71 @@ async sub scan_presence {
     return ($next_cursor + 0, @entries);
 }
 
-# Delayed: send_delayed
-async sub send_delayed {
-    my ($self, $channel, $message, $delay_seconds) = @_;
+# History: record a message into the history buffer for a topic.
+# Required by Role::History.
+async sub _record_history {
+    my ($self, $topic, $message) = @_;
+    return 1 unless $self->{history_size} > 0;
+    return 1 if $message->{type} =~ /^presence\./;
 
-    $self->_validate_channel($channel);
-    $self->_validate_message($message);
-
-    my $delivery_time = Time::HiRes::time() + $delay_seconds;
-    my $entry = encode_json({
-        type    => 'send',
-        target  => $channel,
-        message => $message,
-        id      => rand(),  # Unique identifier to allow multiple identical messages
-    });
-
-    await $self->{_redis}->zadd($self->_delayed_key, $delivery_time, $entry);
-
+    my $history_key = $self->_history_key($topic);
+    await $self->{_redis}->rpush($history_key, encode_json($message));
+    await $self->{_redis}->ltrim($history_key, -$self->{history_size}, -1);
+    await $self->{_redis}->expire($history_key, $self->{group_expiry});
     return 1;
 }
 
-# Delayed: publish_delayed
-async sub publish_delayed {
-    my ($self, $topic, $message, $delay_seconds) = @_;
+# History: read up to $count recent messages from the history buffer.
+# Required by Role::History.
+async sub read_history {
+    my ($self, $topic, $count) = @_;
+    my $history_key = $self->_history_key($topic);
+    my $history_ref = await $self->{_redis}->lrange($history_key, -$count, -1);
+    my @history = ref $history_ref eq 'ARRAY' ? @$history_ref : ();
+    return map { decode_json($_) } @history;
+}
 
-    $self->_validate_topic($topic);
-    $self->_validate_message($message);
-
-    my $delivery_time = Time::HiRes::time() + $delay_seconds;
+# Delayed: schedule an entry into the delayed ZSET.
+# Required by Role::Delayed.
+async sub schedule_delayed {
+    my ($self, $type, $target, $message, $delivery_time) = @_;
     my $entry = encode_json({
-        type    => 'publish',
-        target  => $topic,
+        type    => $type,
+        target  => $target,
         message => $message,
-        id      => rand(),  # Unique identifier
+        id      => rand(),
     });
-
     await $self->{_redis}->zadd($self->_delayed_key, $delivery_time, $entry);
-
     return 1;
 }
 
-# Delayed: process_delayed
+# Delayed: check whether any entries are due now.
+# Required by Role::Delayed.
+async sub _has_due_delayed {
+    my ($self) = @_;
+    my $count = await $self->{_redis}->zcount(
+        $self->_delayed_key, '-inf', Time::HiRes::time()
+    );
+    return $count > 0;
+}
+
+# Delayed: remove all pending send-type entries targeting $channel.
+# Required by Role::Delayed (called from around cleanup).
+async sub _remove_delayed_for_channel {
+    my ($self, $channel) = @_;
+    my $entries_ref = await $self->{_redis}->zrange($self->_delayed_key, 0, -1);
+    my @entries = ref $entries_ref eq 'ARRAY' ? @$entries_ref : ();
+    for my $json (@entries) {
+        my $entry = decode_json($json);
+        if ($entry->{type} eq 'send' && $entry->{target} eq $channel) {
+            await $self->{_redis}->zrem($self->_delayed_key, $json);
+        }
+    }
+    return 1;
+}
+
+# Delayed: process_delayed — drain all due entries.
+# Called by Role::Delayed when needed.
 async sub process_delayed {
     my ($self) = @_;
 
@@ -658,28 +597,37 @@ async sub process_delayed {
     return $processed;
 }
 
-# History: subscribe_with_history
-async sub subscribe_with_history {
-    my ($self, $channel, $topic, $count, %opts) = @_;
+# PatternSubs: return direct group members for a topic.
+# Required by Role::PatternSubs.
+async sub _group_members {
+    my ($self, $topic) = @_;
+    my $key = $self->_group_key($topic);
+    my $members_ref = await $self->{_redis}->smembers($key);
+    return ref $members_ref eq 'ARRAY' ? @$members_ref : ();
+}
 
-    $self->_validate_channel($channel);
-    $self->_validate_topic($topic);
+# PatternSubs: return all channels with a pattern matching the topic.
+# Required by Role::PatternSubs.
+async sub _list_pattern_subscribers {
+    my ($self, $topic) = @_;
+    my $pattern_keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'pat:*');
+    my @pattern_keys = ref $pattern_keys_ref eq 'ARRAY' ? @$pattern_keys_ref : ();
 
-    # Get history first (before subscribing so we get messages in order)
-    my $history_key = $self->_history_key($topic);
-    my $history_ref = await $self->{_redis}->lrange($history_key, -$count, -1);
-    my @history = ref $history_ref eq 'ARRAY' ? @$history_ref : ();
-
-    # Deliver history to channel
-    for my $json (@history) {
-        my $msg = decode_json($json);
-        await $self->_deliver_to_channel($channel, $msg);
+    my @result;
+    for my $pkey (@pattern_keys) {
+        my ($channel) = $pkey =~ /pat:(.+)$/;
+        next unless $channel;
+        my $patterns_ref = await $self->{_redis}->smembers($self->_pattern_key($channel));
+        my @patterns = ref $patterns_ref eq 'ARRAY' ? @$patterns_ref : ();
+        for my $pattern (@patterns) {
+            my $regex = $self->_pattern_to_regex($pattern);
+            if ($topic =~ $regex) {
+                push @result, $channel;
+                last;
+            }
+        }
     }
-
-    # Now subscribe (with presence if provided)
-    await $self->subscribe($channel, $topic, %opts);
-
-    return 1;
+    return @result;
 }
 
 1;
