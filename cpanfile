@@ -6,6 +6,7 @@ requires 'Future::AsyncAwait', '0.66';
 requires 'Future::IO', '0.15';
 requires 'JSON::MaybeXS', '1.004005';
 requires 'namespace::clean';
+requires 'Role::Tiny', '2.000000';
 
 # Middleware base class (currently ships in the PAGI distribution;
 # intent is for PAGI to be split into smaller pieces over time).
