@@ -194,7 +194,22 @@ sub next_message {
 
     # Build an async closure that does the actual waiting.
     my $outer_f = (async sub {
-        my $msg = await $self->poll($channel);
+        # Run poll with cancel-shielding: if outer_f is cancelled, we
+        # don't propagate into the in-flight Redis commands.  Doing so
+        # would leave an orphaned inflight entry that corrupts the
+        # response-reader pipeline on the shared _redis connection.
+        my $poll_f = $self->poll($channel);
+        my $shielded = $poll_f->without_cancel;
+        # Keep poll_f AND the without_cancel wrapper alive until poll_f
+        # finishes.  Without this, cancelling outer_f releases the XS
+        # strongref inside $shielded → poll_f, which triggers a
+        # Future::AsyncAwait "lost its returning future" warning.
+        push @{$self->{_notify_poll_fs}}, $poll_f, $shielded;
+        $poll_f->on_ready(sub {
+            my $list = $self->{_notify_poll_fs};
+            @$list = grep { $_ != $poll_f && $_ != $shielded } @$list if $list;
+        });
+        my $msg = await $shielded;
         return $msg if defined $msg;
 
         # Ensure the subscriber connection and background listener are running.

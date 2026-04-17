@@ -12,7 +12,6 @@ init_loop();
 # compliance suite stays green while Phase 2 fixes them one at a time.
 # Each one corresponds to a specific failing behavior we've already
 # diagnosed and scheduled. Remove each as its corresponding fix lands.
-$ENV{PAGI_CONTRACT_TODO_NEXT_MESSAGE_CANCEL}  = 1;  # Phase 2 Task 2.4b
 $ENV{PAGI_CONTRACT_TODO_DELAYED_CLEANUP}      = 1;  # Phase 2 Task 2.4c
 
 SKIP: {
