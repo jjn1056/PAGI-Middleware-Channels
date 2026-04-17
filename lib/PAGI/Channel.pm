@@ -6,9 +6,6 @@ use Carp ();
 
 our $VERSION = '0.001';
 
-# Class method: extract this connection's channel handle from PAGI scope.
-# Accepts a scope hashref or any object that provides a ->scope method.
-# Croaks with a useful message if the middleware was not wired up.
 sub from {
     my ($class, $arg) = @_;
     my $scope = ref($arg) eq 'HASH' ? $arg : $arg->scope;
@@ -27,10 +24,21 @@ sub new {
 sub backend      { shift->{backend} }
 sub channel_name { shift->{channel_name} }
 
+sub _require_capability {
+    my ($self, $capability) = @_;
+    my $role = "PAGI::Middleware::Channels::Backend::Role::$capability";
+    return if $self->{backend}->does($role);
+    Carp::croak(
+        "Backend " . ref($self->{backend}) . " does not support the "
+      . "$capability capability. Required for this operation. "
+      . "See PAGI::Middleware::Channels documentation for the capability matrix."
+    );
+}
+
 async sub send {
     my ($self, $channel, $message, %opts) = @_;
-    my $delay = delete $opts{delay};
-    if ($delay) {
+    if (my $delay = delete $opts{delay}) {
+        $self->_require_capability('Delayed');
         return await $self->{backend}->send_delayed($channel, $message, $delay);
     }
     return await $self->{backend}->send($channel, $message);
@@ -38,24 +46,65 @@ async sub send {
 
 async sub subscribe {
     my ($self, $topic, %opts) = @_;
-    my $history = delete $opts{history};
-    if ($history) {
-        return await $self->{backend}->subscribe_with_history(
-            $self->{channel_name}, $topic, $history, %opts
+    my $history_count = delete $opts{history};
+    my $presence     = delete $opts{presence};
+
+    if ($history_count) {
+        $self->_require_capability('History');
+        await $self->{backend}->subscribe_with_history(
+            $self->{channel_name}, $topic, $history_count, %opts
+        );
+    } else {
+        await $self->{backend}->subscribe($self->{channel_name}, $topic, %opts);
+    }
+
+    if ($presence) {
+        $self->_require_capability('Presence');
+        await $self->{backend}->track($topic, $self->{channel_name}, $presence);
+        await $self->{backend}->publish(
+            $topic,
+            $self->{backend}->_make_presence_event($topic, 'presence.join', $presence),
+            exclude => $self->{channel_name},
         );
     }
-    return await $self->{backend}->subscribe($self->{channel_name}, $topic, %opts);
+
+    return 1;
 }
 
 async sub unsubscribe {
     my ($self, $topic) = @_;
-    return await $self->{backend}->unsubscribe($self->{channel_name}, $topic);
+
+    my $presence_data;
+    if ($self->{backend}->does('PAGI::Middleware::Channels::Backend::Role::Presence')) {
+        my @entries = await $self->{backend}->_presence_topics_for_channel(
+            $self->{channel_name}
+        );
+        for my $pair (@entries) {
+            if ($pair->[0] eq $topic) {
+                $presence_data = $pair->[1];
+                last;
+            }
+        }
+    }
+
+    await $self->{backend}->unsubscribe($self->{channel_name}, $topic);
+
+    if ($presence_data) {
+        await $self->{backend}->untrack($topic, $self->{channel_name});
+        await $self->{backend}->publish(
+            $topic,
+            $self->{backend}->_make_presence_event($topic, 'presence.leave', $presence_data),
+            exclude => $self->{channel_name},
+        );
+    }
+
+    return 1;
 }
 
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
-    my $delay = delete $opts{delay};
-    if ($delay) {
+    if (my $delay = delete $opts{delay}) {
+        $self->_require_capability('Delayed');
         return await $self->{backend}->publish_delayed($topic, $message, $delay);
     }
     return await $self->{backend}->publish($topic, $message, %opts);
@@ -63,36 +112,43 @@ async sub publish {
 
 async sub psubscribe {
     my ($self, $pattern) = @_;
+    $self->_require_capability('PatternSubs');
     return await $self->{backend}->psubscribe($self->{channel_name}, $pattern);
 }
 
 async sub punsubscribe {
     my ($self, $pattern) = @_;
+    $self->_require_capability('PatternSubs');
     return await $self->{backend}->punsubscribe($self->{channel_name}, $pattern);
 }
 
 async sub track {
     my ($self, $topic, $presence_data) = @_;
-    return await $self->{backend}->track($topic, $presence_data);
+    $self->_require_capability('Presence');
+    return await $self->{backend}->track($topic, $self->{channel_name}, $presence_data);
 }
 
 async sub untrack {
     my ($self, $topic) = @_;
-    return await $self->{backend}->untrack($topic);
+    $self->_require_capability('Presence');
+    return await $self->{backend}->untrack($topic, $self->{channel_name});
 }
 
 async sub list_presence {
     my ($self, $topic, %opts) = @_;
+    $self->_require_capability('Presence');
     return await $self->{backend}->list_presence($topic, %opts);
 }
 
 async sub count_presence {
     my ($self, $topic) = @_;
+    $self->_require_capability('Presence');
     return await $self->{backend}->count_presence($topic);
 }
 
 async sub scan_presence {
     my ($self, $topic, %opts) = @_;
+    $self->_require_capability('Presence');
     return await $self->{backend}->scan_presence($topic, %opts);
 }
 
@@ -150,6 +206,12 @@ A handler-facing handle bound to a single connection's channel name and the
 configured backend. Created per-request by L<PAGI::Middleware::Channels>'s
 C<wrap()> and exposed via C<< PAGI::Channel->from($scope) >>.
 
+Capability methods (track, untrack, list_presence, count_presence,
+scan_presence, psubscribe, punsubscribe, and the delay/history/presence
+options) require the backend to declare the corresponding capability role.
+If the backend does not support a capability, the call croaks with a clear
+message.
+
 =head1 CONSTRUCTORS
 
 =head2 from
@@ -191,6 +253,15 @@ The underlying L<PAGI::Middleware::Channels::Backend> instance.
 
 =head1 METHODS
 
+=head2 _require_capability
+
+    $ch->_require_capability('Presence');
+
+Internal method that checks whether the backend does the role
+C<PAGI::Middleware::Channels::Backend::Role::$capability>. Croaks with a
+descriptive message if it does not. Called automatically by capability methods
+before delegating to the backend.
+
 =head2 send
 
     await $ch->send($channel, { type => 'msg', ... });
@@ -200,7 +271,7 @@ Send a message directly to a specific channel. Options:
 
 =over 4
 
-=item * C<delay> — Delay delivery by N seconds.
+=item * C<delay> — Delay delivery by N seconds. Requires the Delayed capability.
 
 =back
 
@@ -214,9 +285,9 @@ Subscribe this connection's channel to a topic. Options:
 
 =over 4
 
-=item * C<presence> — Hash of presence data to track for this subscriber.
+=item * C<presence> — Hash of presence data to track for this subscriber. Requires the Presence capability.
 
-=item * C<history> — Number of recent messages to receive immediately on subscribe.
+=item * C<history> — Number of recent messages to receive immediately on subscribe. Requires the History capability.
 
 =back
 
@@ -236,7 +307,7 @@ Options:
 
 =item * C<exclude> — Channel or arrayref of channels to exclude.
 
-=item * C<delay> — Delay delivery by N seconds.
+=item * C<delay> — Delay delivery by N seconds. Requires the Delayed capability.
 
 =back
 
@@ -245,21 +316,27 @@ Options:
     await $ch->psubscribe("chat.*");      # Matches chat.room1
     await $ch->psubscribe("events.**");   # Matches events.user.123
 
-C<*> matches exactly one segment; C<**> matches zero or more.
+C<*> matches exactly one segment; C<**> matches zero or more. Requires the
+PatternSubs capability.
 
 =head2 punsubscribe
 
     await $ch->punsubscribe("chat.*");
 
+Requires the PatternSubs capability.
+
 =head2 track
 
     await $ch->track($topic, { worker_id => $$, status => 'idle' });
 
-Explicitly track presence without subscribing — useful for workers.
+Explicitly track presence without subscribing — useful for workers. Requires
+the Presence capability.
 
 =head2 untrack
 
     await $ch->untrack($topic);
+
+Requires the Presence capability.
 
 =head2 list_presence
 
@@ -267,7 +344,8 @@ Explicitly track presence without subscribing — useful for workers.
     my @users = await $ch->list_presence($topic, limit => 100);
 
 Returns presence data for all current subscribers to C<$topic>. Each element
-is the hashref that was passed to C<subscribe> or C<track>.
+is the hashref that was passed to C<subscribe> or C<track>. Requires the
+Presence capability.
 
 B<Intended for small groups> (chat rooms, lobbies, game sessions). For large
 topics, use C<count_presence> to get a count or C<scan_presence> to paginate.
@@ -280,7 +358,7 @@ croaks with a message directing you to C<count_presence> or C<scan_presence>.
     my $n = await $ch->count_presence($topic);
 
 Returns the number of members currently tracked in C<$topic>. O(1) in both
-backends — safe to call on large topics.
+backends — safe to call on large topics. Requires the Presence capability.
 
 =head2 scan_presence
 
@@ -292,6 +370,7 @@ backends — safe to call on large topics.
 
 Cursor-based iteration over presence data. Start with C<cursor =E<gt> 0>;
 keep calling until the returned cursor is C<0> (meaning iteration is complete).
+Requires the Presence capability.
 
 C<count> is a hint — actual batch size may be smaller or larger (Redis SCAN
 behaviour). For the Memory backend, C<count> is exact.
