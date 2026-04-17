@@ -2,25 +2,30 @@ package PAGI::Middleware::Channels::Backend::Memory;
 use strict;
 use warnings;
 use parent 'PAGI::Middleware::Channels::Backend';
+use Role::Tiny::With;
 use Future::AsyncAwait;
 use Future;
 use Time::HiRes ();
 use Carp ();
 use namespace::clean;
 
+with 'PAGI::Middleware::Channels::Backend::Role::Presence',
+     'PAGI::Middleware::Channels::Backend::Role::History',
+     'PAGI::Middleware::Channels::Backend::Role::Delayed',
+     'PAGI::Middleware::Channels::Backend::Role::PatternSubs';
+
 sub new {
     my ($class, %args) = @_;
     my $self = $class->SUPER::new(%args);
 
     # Memory-specific state initialization
-    $self->{queues}      = {};
-    $self->{groups}      = {};
-    $self->{patterns}    = {};
-    $self->{presence}    = {};
-    $self->{history}     = {};
-    $self->{delayed}     = [];
-    $self->{_waiters}    = {};
-    $self->{_channel_id} = undef;
+    $self->{queues}   = {};
+    $self->{groups}   = {};
+    $self->{patterns} = {};
+    $self->{presence} = {};
+    $self->{history}  = {};
+    $self->{delayed}  = [];
+    $self->{_waiters} = {};
 
     return $self;
 }
@@ -54,9 +59,6 @@ async sub send {
 async sub poll {
     my ($self, $channel) = @_;
 
-    # Drain any due delayed messages into their target queues first
-    await $self->process_delayed if @{$self->{delayed}};
-
     my $queue = $self->{queues}{$channel} or return undef;
 
     # Remove expired messages
@@ -89,63 +91,25 @@ sub _notify_waiters {
 # PubSub: subscribe
 async sub subscribe {
     my ($self, $channel, $topic, %opts) = @_;
-
     $self->_validate_channel($channel);
     $self->_validate_topic($topic);
 
     my $now = time();
-    my $is_new = !exists $self->{groups}{$topic}{$channel};
-
     $self->{groups}{$topic} //= {};
     $self->{groups}{$topic}{$channel} = $now + $self->{group_expiry};
-
-    # Handle presence option
-    if (my $presence_data = $opts{presence}) {
-        $self->{presence}{$topic} //= {};
-        $self->{presence}{$topic}{$channel} = {
-            data    => $presence_data,
-            expires => $now + $self->{group_expiry},
-        };
-
-        # Broadcast presence.join to other subscribers (if new)
-        if ($is_new) {
-            await $self->_broadcast_presence_event($topic, 'presence.join', $presence_data, $channel);
-        }
-    }
-
     return 1;
 }
 
 # PubSub: unsubscribe
 async sub unsubscribe {
     my ($self, $channel, $topic) = @_;
-
-    my $presence_data;
-    if ($self->{presence}{$topic} && $self->{presence}{$topic}{$channel}) {
-        $presence_data = $self->{presence}{$topic}{$channel}{data};
-        delete $self->{presence}{$topic}{$channel};
-    }
-
     if ($self->{groups}{$topic}) {
         delete $self->{groups}{$topic}{$channel};
     }
-
-    # Broadcast presence.leave if had presence
-    if ($presence_data) {
-        await $self->_broadcast_presence_event($topic, 'presence.leave', $presence_data, $channel);
-    }
-
     return 1;
 }
 
-# Helper for presence events
-async sub _broadcast_presence_event {
-    my ($self, $topic, $event_type, $presence_data, $exclude_channel) = @_;
-    my $event = $self->_make_presence_event($topic, $event_type, $presence_data);
-    await $self->publish($topic, $event, exclude => $exclude_channel);
-}
-
-# Helper for delivery
+# Helper for delivery with current timestamp
 sub _deliver_to_channel {
     my ($self, $channel, $message, $now) = @_;
 
@@ -161,6 +125,13 @@ sub _deliver_to_channel {
     }
 }
 
+# Required by Role::History's subscribe_with_history default implementation.
+# Delivers a message to a channel using the current time as the expiry base.
+sub _deliver {
+    my ($self, $channel, $message) = @_;
+    $self->_deliver_to_channel($channel, $message, Time::HiRes::time());
+}
+
 # PubSub: publish
 async sub publish {
     my ($self, $topic, $message, %opts) = @_;
@@ -171,21 +142,6 @@ async sub publish {
     my %excluded = %{ $self->_normalize_exclude($opts{exclude}) };
 
     my $now = Time::HiRes::time();
-    my %delivered;  # Track to avoid duplicates
-
-    # Store in history buffer (if history enabled and not a presence event)
-    if ($self->{history_size} > 0 && $message->{type} !~ /^presence\./) {
-        $self->{history}{$topic} //= [];
-        push @{$self->{history}{$topic}}, {
-            message   => $message,
-            timestamp => $now,
-        };
-
-        # Trim to history_size
-        while (@{$self->{history}{$topic}} > $self->{history_size}) {
-            shift @{$self->{history}{$topic}};
-        }
-    }
 
     # Direct group subscribers
     my $members = $self->{groups}{$topic} // {};
@@ -193,33 +149,19 @@ async sub publish {
         next if $members->{$channel} < $now;
         next if $excluded{$channel};
         $self->_deliver_to_channel($channel, $message, $now);
-        $delivered{$channel} = 1;
-    }
-
-    # Pattern subscribers
-    for my $channel (keys %{$self->{patterns}}) {
-        next if $excluded{$channel};
-        next if $delivered{$channel};  # Already delivered via exact match
-
-        for my $p (@{$self->{patterns}{$channel}}) {
-            if ($topic =~ $p->{regex}) {
-                $self->_deliver_to_channel($channel, $message, $now);
-                $delivered{$channel} = 1;
-                last;  # Only deliver once per channel
-            }
-        }
     }
 
     return 1;
 }
+
 async sub flush {
     my ($self) = @_;
-    $self->{queues} = {};
-    $self->{groups} = {};
+    $self->{queues}   = {};
+    $self->{groups}   = {};
     $self->{patterns} = {};
     $self->{presence} = {};
-    $self->{history} = {};
-    $self->{delayed} = [];
+    $self->{history}  = {};
+    $self->{delayed}  = [];
 
     # Cancel all pending next_message waiters
     for my $waiters (values %{$self->{_waiters}}) {
@@ -233,30 +175,14 @@ async sub flush {
 async sub cleanup {
     my ($self, $channel) = @_;
 
-    # Remove from all groups and handle presence
+    # Remove from all groups (no presence broadcast — Role::Presence's
+    # around-cleanup handles that BEFORE this runs).
     for my $topic (keys %{$self->{groups}}) {
-        if (delete $self->{groups}{$topic}{$channel}) {
-            # Check if had presence
-            if ($self->{presence}{$topic} && $self->{presence}{$topic}{$channel}) {
-                my $presence_data = $self->{presence}{$topic}{$channel}{data};
-                delete $self->{presence}{$topic}{$channel};
-
-                # Broadcast leave event
-                await $self->_broadcast_presence_event($topic, 'presence.leave', $presence_data, $channel);
-            }
-        }
+        delete $self->{groups}{$topic}{$channel};
     }
-
-    # Remove pattern subscriptions
-    delete $self->{patterns}{$channel};
 
     # Clear message queue
     delete $self->{queues}{$channel};
-
-    # Remove delayed messages for this channel
-    $self->{delayed} = [
-        grep { $_->{target} ne $channel } @{$self->{delayed}}
-    ];
 
     # Cancel any pending next_message waiters
     if (my $waiters = delete $self->{_waiters}{$channel}) {
@@ -265,14 +191,6 @@ async sub cleanup {
 
     return 1;
 }
-
-# Channel ID management (for presence tracking)
-sub set_channel_id {
-    my ($self, $channel_id) = @_;
-    $self->{_channel_id} = $channel_id;
-}
-
-sub channel_id { shift->{_channel_id} }
 
 # PubSub: psubscribe (pattern subscribe)
 async sub psubscribe {
@@ -301,6 +219,11 @@ async sub psubscribe {
 async sub punsubscribe {
     my ($self, $channel, $pattern) = @_;
 
+    if (!defined $pattern) {
+        delete $self->{patterns}{$channel};
+        return 1;
+    }
+
     if ($self->{patterns}{$channel}) {
         $self->{patterns}{$channel} = [
             grep { $_->{pattern} ne $pattern } @{$self->{patterns}{$channel}}
@@ -309,13 +232,10 @@ async sub punsubscribe {
 
     return 1;
 }
+
 # Presence: track
 async sub track {
-    my ($self, $topic, $presence_data) = @_;
-
-    my $channel = $self->{_channel_id}
-        or die "track() requires set_channel_id() first";
-
+    my ($self, $topic, $channel, $presence_data) = @_;
     $self->_validate_topic($topic);
 
     my $now = time();
@@ -330,16 +250,23 @@ async sub track {
 
 # Presence: untrack
 async sub untrack {
-    my ($self, $topic) = @_;
-
-    my $channel = $self->{_channel_id}
-        or die "untrack() requires set_channel_id() first";
-
+    my ($self, $topic, $channel) = @_;
     if ($self->{presence}{$topic}) {
         delete $self->{presence}{$topic}{$channel};
     }
-
     return 1;
+}
+
+# Presence: _presence_topics_for_channel (required by Role::Presence)
+async sub _presence_topics_for_channel {
+    my ($self, $channel) = @_;
+    my @result;
+    for my $topic (keys %{$self->{presence}}) {
+        if (my $entry = $self->{presence}{$topic}{$channel}) {
+            push @result, [ $topic, $entry->{data} ];
+        }
+    }
+    return @result;
 }
 
 # Presence: list_presence
@@ -439,50 +366,60 @@ sub next_message {
     return $result_f;
 }
 
-# Delayed: send_delayed
-async sub send_delayed {
-    my ($self, $channel, $message, $delay_seconds) = @_;
+# History: _record_history (required by Role::History)
+async sub _record_history {
+    my ($self, $topic, $message) = @_;
+    return 1 unless $self->{history_size} > 0;
+    return 1 if $message->{type} =~ /^presence\./;
 
-    $self->_validate_channel($channel);
-    $self->_validate_message($message);
-
-    my $deliver_at = Time::HiRes::time() + $delay_seconds;
-
-    push @{$self->{delayed}}, {
-        deliver_at => $deliver_at,
-        type       => 'send',
-        target     => $channel,
-        message    => $message,
+    $self->{history}{$topic} //= [];
+    push @{$self->{history}{$topic}}, {
+        message   => $message,
+        timestamp => Time::HiRes::time(),
     };
-
-    # Keep sorted by delivery time
-    @{$self->{delayed}} = sort { $a->{deliver_at} <=> $b->{deliver_at} } @{$self->{delayed}};
-
+    while (@{$self->{history}{$topic}} > $self->{history_size}) {
+        shift @{$self->{history}{$topic}};
+    }
     return 1;
 }
 
-# Delayed: publish_delayed
-async sub publish_delayed {
-    my ($self, $topic, $message, $delay_seconds) = @_;
+# History: read_history (required by Role::History)
+async sub read_history {
+    my ($self, $topic, $count) = @_;
+    my @history = @{$self->{history}{$topic} // []};
+    @history = @history[-$count..-1] if @history > $count;
+    return map { $_->{message} } @history;
+}
 
-    $self->_validate_topic($topic);
-    $self->_validate_message($message);
-
-    my $deliver_at = Time::HiRes::time() + $delay_seconds;
-
+# Delayed: schedule_delayed (required by Role::Delayed)
+async sub schedule_delayed {
+    my ($self, $type, $target, $message, $delivery_time) = @_;
     push @{$self->{delayed}}, {
-        deliver_at => $deliver_at,
-        type       => 'publish',
-        target     => $topic,
+        deliver_at => $delivery_time,
+        type       => $type,
+        target     => $target,
         message    => $message,
     };
-
     @{$self->{delayed}} = sort { $a->{deliver_at} <=> $b->{deliver_at} } @{$self->{delayed}};
-
     return 1;
 }
 
-# Delayed: process_delayed (called periodically or on poll)
+# Delayed: _has_due_delayed (required by Role::Delayed)
+async sub _has_due_delayed {
+    my ($self) = @_;
+    return @{$self->{delayed}} && $self->{delayed}[0]{deliver_at} <= Time::HiRes::time();
+}
+
+# Delayed: _remove_delayed_for_channel (required by Role::Delayed)
+async sub _remove_delayed_for_channel {
+    my ($self, $channel) = @_;
+    $self->{delayed} = [
+        grep { !($_->{type} eq 'send' && $_->{target} eq $channel) } @{$self->{delayed}}
+    ];
+    return 1;
+}
+
+# Delayed: process_delayed (required by Role::Delayed)
 async sub process_delayed {
     my ($self) = @_;
 
@@ -505,33 +442,27 @@ async sub process_delayed {
     return $processed;
 }
 
-# History: subscribe_with_history
-async sub subscribe_with_history {
-    my ($self, $channel, $topic, $history_count, %opts) = @_;
-
-    $self->_validate_channel($channel);
-    $self->_validate_topic($topic);
-
-    my $now = Time::HiRes::time();
-
-    # Deliver history first
-    if ($history_count > 0 && $self->{history}{$topic}) {
-        my @history = @{$self->{history}{$topic}};
-
-        # Take last N
-        if (@history > $history_count) {
-            @history = @history[-$history_count..-1];
-        }
-
-        for my $entry (@history) {
-            $self->_deliver_to_channel($channel, $entry->{message}, $now);
+# PatternSubs: _list_pattern_subscribers (required by Role::PatternSubs)
+async sub _list_pattern_subscribers {
+    my ($self, $topic) = @_;
+    my @result;
+    for my $channel (keys %{$self->{patterns}}) {
+        for my $p (@{$self->{patterns}{$channel}}) {
+            if ($topic =~ $p->{regex}) {
+                push @result, $channel;
+                last;
+            }
         }
     }
+    return @result;
+}
 
-    # Now do regular subscribe (with presence if provided)
-    await $self->subscribe($channel, $topic, %opts);
-
-    return 1;
+# PatternSubs: _group_members (required by Role::PatternSubs's around publish)
+async sub _group_members {
+    my ($self, $topic) = @_;
+    my $members = $self->{groups}{$topic} // {};
+    my $now = time();
+    return grep { $members->{$_} >= $now } keys %$members;
 }
 
 1;
