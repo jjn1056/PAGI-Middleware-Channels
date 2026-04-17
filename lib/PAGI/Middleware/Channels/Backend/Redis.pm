@@ -450,6 +450,18 @@ async sub cleanup {
     # Remove pattern subscriptions
     await $self->{_redis}->del($self->_pattern_key($channel));
 
+    # Sweep delayed ZSET: remove any pending send_delayed entries targeting this channel.
+    # publish_delayed entries (which target topics, not channels) are left untouched.
+    my $delayed_key = $self->_delayed_key;
+    my $delayed_ref = await $self->{_redis}->zrange($delayed_key, 0, -1);
+    my @delayed = ref $delayed_ref eq 'ARRAY' ? @$delayed_ref : ();
+    for my $json (@delayed) {
+        my $entry = decode_json($json);
+        if ($entry->{type} eq 'send' && $entry->{target} eq $channel) {
+            await $self->{_redis}->zrem($delayed_key, $json);
+        }
+    }
+
     # Cancel any pending next_message futures for this channel
     if (my $futures = delete $self->{_active_fs}{$channel}) {
         $_->cancel for grep { !$_->is_ready } @$futures;

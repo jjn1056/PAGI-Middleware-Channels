@@ -8,12 +8,6 @@ use Test2::V0;
 
 init_loop();
 
-# The following env vars mark known Redis-backend bugs as TODO so the
-# compliance suite stays green while Phase 2 fixes them one at a time.
-# Each one corresponds to a specific failing behavior we've already
-# diagnosed and scheduled. Remove each as its corresponding fix lands.
-$ENV{PAGI_CONTRACT_TODO_DELAYED_CLEANUP}      = 1;  # Phase 2 Task 2.4c
-
 SKIP: {
     skip_without_redis();
 
