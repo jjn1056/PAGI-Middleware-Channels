@@ -2390,7 +2390,7 @@ requires '_presence_topics_for_channel';
 #   $channel currently has a presence entry. Used by the around-cleanup
 #   hook below.
 
-around cleanup => sub {
+around cleanup => async sub {
     my ($orig, $self, $channel) = @_;
     my @topics_data = await $self->_presence_topics_for_channel($channel);
     for my $pair (@topics_data) {
@@ -2402,7 +2402,7 @@ around cleanup => sub {
             exclude => $channel,
         );
     }
-    return $self->$orig($channel);
+    return await $self->$orig($channel);
 };
 
 1;
@@ -2514,10 +2514,10 @@ Replace the `sub _record_history_hook` with:
 
 ```perl
 # Wrap publish so it records history (the hook in the base is a no-op).
-around publish => sub {
+around publish => async sub {
     my ($orig, $self, $topic, $message, %opts) = @_;
     await $self->_record_history($topic, $message);
-    return $self->$orig($topic, $message, %opts);
+    return await $self->$orig($topic, $message, %opts);
 };
 ```
 
@@ -2603,19 +2603,19 @@ async sub publish_delayed {
 }
 
 # Pump delayed messages on every poll.
-around poll => sub {
+around poll => async sub {
     my ($orig, $self, $channel) = @_;
     if (await $self->_has_due_delayed) {
         await $self->process_delayed;
     }
-    return $self->$orig($channel);
+    return await $self->$orig($channel);
 };
 
 # Clean up channel's delayed entries when channel is torn down.
-around cleanup => sub {
+around cleanup => async sub {
     my ($orig, $self, $channel) = @_;
     await $self->_remove_delayed_for_channel($channel);
-    return $self->$orig($channel);
+    return await $self->$orig($channel);
 };
 
 1;
@@ -2685,7 +2685,7 @@ requires qw(
 
 # Hook the publish dispatch: after direct subscribers, also deliver to
 # pattern subscribers.
-around publish => sub {
+around publish => async sub {
     my ($orig, $self, $topic, $message, %opts) = @_;
     my $result = await $self->$orig($topic, $message, %opts);
 
@@ -2714,10 +2714,10 @@ around publish => sub {
 };
 
 # Clean up channel's patterns when channel is torn down.
-around cleanup => sub {
+around cleanup => async sub {
     my ($orig, $self, $channel) = @_;
     await $self->punsubscribe($channel, undef);
-    return $self->$orig($channel);
+    return await $self->$orig($channel);
 };
 
 1;
