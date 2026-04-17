@@ -69,7 +69,6 @@ sub _create_channel_interface {
     my ($self, $channel_name) = @_;
 
     require PAGI::Channel;
-    $self->backend->set_channel_id($channel_name);
 
     return PAGI::Channel->new(
         backend      => $self->backend,
