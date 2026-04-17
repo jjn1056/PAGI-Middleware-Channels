@@ -495,6 +495,10 @@ This backend stores all messages in memory and is suitable for single-process
 applications or testing. Messages are stored in FIFO queues with configurable
 capacity limits and expiration.
 
+This backend implements the core L<PAGI::Middleware::Channels::Backend>
+contract and declares the Presence, History, Delayed, and PatternSubs
+capability roles.
+
 B<Note:> This backend does not provide cross-process communication. For
 multi-process or multi-server scenarios, use the Redis backend.
 

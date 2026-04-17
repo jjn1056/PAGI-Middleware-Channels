@@ -160,7 +160,8 @@ Number of messages to retain for the history feature. Default: 0 (disabled).
 
 =head1 REQUIRED METHODS
 
-=head2 Core
+Subclasses must implement these eight core methods. All other behavior is
+provided via capability roles (see L</CAPABILITY ROLES>).
 
 =over 4
 
@@ -187,47 +188,42 @@ The returned Future may be cancelled to abort the wait.
 
 =back
 
-=head2 Pattern Subscriptions
+=head1 CAPABILITY ROLES
+
+Optional behavior is provided by capability roles in
+C<PAGI::Middleware::Channels::Backend::Role::*>:
 
 =over 4
 
-=item psubscribe($channel, $pattern) -> Future
+=item L<Role::Presence|PAGI::Middleware::Channels::Backend::Role::Presence> - track, untrack, list_presence, count_presence, scan_presence
 
-=item punsubscribe($channel, $pattern) -> Future
+=item L<Role::History|PAGI::Middleware::Channels::Backend::Role::History> - subscribe_with_history, _record_history, read_history
+
+=item L<Role::Delayed|PAGI::Middleware::Channels::Backend::Role::Delayed> - send_delayed, publish_delayed, schedule_delayed, process_delayed
+
+=item L<Role::PatternSubs|PAGI::Middleware::Channels::Backend::Role::PatternSubs> - psubscribe, punsubscribe
 
 =back
 
-=head2 Presence
+Backends declare capabilities via C<< with 'PAGI::Middleware::Channels::Backend::Role::Presence' >> etc.
+
+=head1 SHARED UTILITIES
+
+Protected methods available to all subclasses:
 
 =over 4
 
-=item track($topic, $presence_data) -> Future
+=item _validate_channel($name) — dies with C<InvalidChannelName> if invalid
 
-=item untrack($topic) -> Future
+=item _validate_topic($name) — alias for _validate_channel (same rules)
 
-=item list_presence($topic) -> Future[@presences]
+=item _validate_message($msg) — dies with C<InvalidMessage> or C<MessageTooLarge>
 
-=item count_presence($topic) -> Future($count)
+=item _pattern_to_regex($pattern) — compiles glob pattern to regex
 
-=item scan_presence($topic, cursor => $cursor, count => $n) -> Future($next_cursor, @presences)
+=item _normalize_exclude($exclude) — normalizes exclude option to hashref
 
-=back
-
-=head2 Delayed Messages
-
-=over 4
-
-=item send_delayed($channel, $message, $delay_seconds) -> Future
-
-=item publish_delayed($topic, $message, $delay_seconds) -> Future
-
-=back
-
-=head2 History
-
-=over 4
-
-=item subscribe_with_history($channel, $topic, $history_count, %opts) -> Future
+=item _make_presence_event($topic, $type, $data) — builds presence event hashref
 
 =back
 

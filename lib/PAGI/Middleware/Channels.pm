@@ -209,6 +209,28 @@ Multi-process, multi-server. Takes a caller-owned L<Async::Redis>
 instance; this distribution itself has no runtime dependency on any
 Redis client — any object that ducks the Async::Redis interface works.
 
+=head1 BACKEND CAPABILITIES
+
+PAGI's channel layer splits backend behavior into a small required core
+and four optional capability roles. Backends declare which capabilities
+they support; user calls that require an unsupported capability croak
+with a clear "not supported" message.
+
+=head2 Capability Matrix
+
+  Backend     Core  Presence  History  Delayed  PatternSubs
+  ---------  ----- --------- -------- -------- ------------
+  Memory       Y       Y         Y       Y          Y
+  Redis        Y       Y         Y       Y          Y
+  PostgreSQL   Y       Y         Y       Y          Y     (planned, not yet shipped)
+
+=head2 Choosing a backend
+
+If you need presence (real-time online-user tracking), history (replay-on-subscribe),
+delayed delivery, or pattern subscriptions, all current backends support these.
+Future backends (NATS, AWS SNS+SQS, etc.) may support only a subset; the capability
+matrix above will be updated as those land.
+
 =head1 INHERITANCE
 
 Inherits from L<PAGI::Middleware>. The parent class provides:

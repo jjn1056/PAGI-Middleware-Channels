@@ -664,6 +664,10 @@ PAGI::Middleware::Channels::Backend::Redis - Redis-backed channel backend for mu
 
 Redis-backed channel backend for multi-process and multi-server use.
 
+This backend implements the core L<PAGI::Middleware::Channels::Backend>
+contract and declares the Presence, History, Delayed, and PatternSubs
+capability roles.
+
 The backend takes a configured L<Async::Redis> instance (or any
 object with a compatible interface) and uses it for all Redis
 operations. Connection lifecycle, reconnect, prefix, and fork-safety

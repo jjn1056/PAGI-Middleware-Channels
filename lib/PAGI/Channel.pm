@@ -206,11 +206,11 @@ A handler-facing handle bound to a single connection's channel name and the
 configured backend. Created per-request by L<PAGI::Middleware::Channels>'s
 C<wrap()> and exposed via C<< PAGI::Channel->from($scope) >>.
 
-Capability methods (track, untrack, list_presence, count_presence,
+Capability-gated methods (track, untrack, list_presence, count_presence,
 scan_presence, psubscribe, punsubscribe, and the delay/history/presence
-options) require the backend to declare the corresponding capability role.
-If the backend does not support a capability, the call croaks with a clear
-message.
+options on send/publish/subscribe) croak if the backend does not declare
+the required role. See L<PAGI::Middleware::Channels/BACKEND CAPABILITIES>
+for the matrix.
 
 =head1 CONSTRUCTORS
 
