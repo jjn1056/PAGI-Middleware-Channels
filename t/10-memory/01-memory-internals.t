@@ -33,7 +33,6 @@ subtest 'flush clears all internal state' => sub {
 
 subtest 'cleanup removes delayed messages from internal queue' => sub {
     my $backend = PAGI::Middleware::Channels::Backend::Memory->new;
-    $backend->set_channel_id('ch1');
 
     # Schedule delayed messages
     run { $backend->send_delayed('ch1', { type => 'delayed1' }, 10) };

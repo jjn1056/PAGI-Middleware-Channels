@@ -125,9 +125,8 @@ subtest 'scan_presence delegates to backend' => sub {
         my $ch = PAGI::Channel->from($scope);
 
         for my $i (1..3) {
-            $backend->set_channel_id("scan.u$i");
-            await $backend->subscribe("scan.u$i", 'scan.facade.room',
-                presence => { n => $i });
+            await $backend->subscribe("scan.u$i", 'scan.facade.room');
+            await $backend->track('scan.facade.room', "scan.u$i", { n => $i });
         }
 
         my $cursor = 0;
@@ -158,9 +157,8 @@ subtest 'list_presence limit croaks via facade when exceeded' => sub {
         my $ch = PAGI::Channel->from($scope);
 
         for my $i (1..3) {
-            $backend->set_channel_id("lim.u$i");
-            await $backend->subscribe("lim.u$i", 'lim.facade.room',
-                presence => { n => $i });
+            await $backend->subscribe("lim.u$i", 'lim.facade.room');
+            await $backend->track('lim.facade.room', "lim.u$i", { n => $i });
         }
 
         eval {

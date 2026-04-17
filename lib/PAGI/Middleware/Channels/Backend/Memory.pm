@@ -125,11 +125,12 @@ sub _deliver_to_channel {
     }
 }
 
-# Required by Role::History's subscribe_with_history default implementation.
-# Delivers a message to a channel using the current time as the expiry base.
+# Required by Role::History's subscribe_with_history and Role::PatternSubs.
+# Delivers a message to a channel; returns a Future (roles await this).
 sub _deliver {
     my ($self, $channel, $message) = @_;
     $self->_deliver_to_channel($channel, $message, Time::HiRes::time());
+    return Future->done(1);
 }
 
 # PubSub: publish

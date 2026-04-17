@@ -453,15 +453,14 @@ sub _test_presence {
 
     subtest 'explicit track/untrack' => sub {
         my $backend = $factory->();
-        $backend->set_channel_id('worker.1');
 
-        _run { $backend->track('workers.pool', { worker_id => 1, started => 1000 }) };
+        _run { $backend->track('workers.pool', 'worker.1', { worker_id => 1, started => 1000 }) };
 
         my @presence = _run { $backend->list_presence('workers.pool') };
         is(scalar @presence, 1, 'one presence entry');
         is($presence[0]->{worker_id}, 1, 'correct data');
 
-        _run { $backend->untrack('workers.pool') };
+        _run { $backend->untrack('workers.pool', 'worker.1') };
 
         @presence = _run { $backend->list_presence('workers.pool') };
         is(scalar @presence, 0, 'presence removed');
@@ -469,11 +468,9 @@ sub _test_presence {
 
     subtest 'subscribe with presence option' => sub {
         my $backend = $factory->();
-        $backend->set_channel_id('user.alice');
 
-        _run { $backend->subscribe('user.alice', 'chat.room1',
-            presence => { user => 'alice', status => 'online' }
-        )};
+        _run { $backend->subscribe('user.alice', 'chat.room1') };
+        _run { $backend->track('chat.room1', 'user.alice', { user => 'alice', status => 'online' }) };
 
         my @presence = _run { $backend->list_presence('chat.room1') };
         is(scalar @presence, 1, 'presence tracked via subscribe');
@@ -485,12 +482,16 @@ sub _test_presence {
         my $backend = $factory->();
 
         # Subscribe ch1 first (to receive events)
-        $backend->set_channel_id('ch1');
-        _run { $backend->subscribe('ch1', 'room', presence => { user => 'ch1' }) };
+        _run { $backend->subscribe('ch1', 'room') };
+        _run { $backend->track('room', 'ch1', { user => 'ch1' }) };
 
         # Now ch2 joins - ch1 should get presence.join event
-        $backend->set_channel_id('ch2');
-        _run { $backend->subscribe('ch2', 'room', presence => { user => 'ch2' }) };
+        _run { $backend->subscribe('ch2', 'room') };
+        _run { $backend->track('room', 'ch2', { user => 'ch2' }) };
+        _run { $backend->publish('room',
+            $backend->_make_presence_event('room', 'presence.join', { user => 'ch2' }),
+            exclude => 'ch2'
+        )};
 
         # Check ch1 received join event
         my $event = _run { $backend->poll('ch1') };
@@ -499,6 +500,11 @@ sub _test_presence {
 
         # ch2 leaves - ch1 should get presence.leave event
         _run { $backend->unsubscribe('ch2', 'room') };
+        _run { $backend->untrack('room', 'ch2') };
+        _run { $backend->publish('room',
+            $backend->_make_presence_event('room', 'presence.leave', { user => 'ch2' }),
+            exclude => 'ch2'
+        )};
 
         $event = _run { $backend->poll('ch1') };
         is($event->{type}, 'presence.leave', 'presence.leave event');
@@ -508,14 +514,14 @@ sub _test_presence {
     subtest 'list_presence returns all current' => sub {
         my $backend = $factory->();
 
-        $backend->set_channel_id('u1');
-        _run { $backend->subscribe('u1', 'room', presence => { name => 'Alice' }) };
+        _run { $backend->subscribe('u1', 'room') };
+        _run { $backend->track('room', 'u1', { name => 'Alice' }) };
 
-        $backend->set_channel_id('u2');
-        _run { $backend->subscribe('u2', 'room', presence => { name => 'Bob' }) };
+        _run { $backend->subscribe('u2', 'room') };
+        _run { $backend->track('room', 'u2', { name => 'Bob' }) };
 
-        $backend->set_channel_id('u3');
-        _run { $backend->subscribe('u3', 'room', presence => { name => 'Carol' }) };
+        _run { $backend->subscribe('u3', 'room') };
+        _run { $backend->track('room', 'u3', { name => 'Carol' }) };
 
         my @presence = _run { $backend->list_presence('room') };
         is(scalar @presence, 3, 'three users present');
@@ -533,16 +539,16 @@ sub _test_presence {
     subtest 'count_presence returns number of non-expired entries' => sub {
         my $backend = $factory->();
 
-        $backend->set_channel_id('u1');
-        _run { $backend->subscribe('u1', 'room', presence => { name => 'Alice' }) };
+        _run { $backend->subscribe('u1', 'room') };
+        _run { $backend->track('room', 'u1', { name => 'Alice' }) };
 
-        $backend->set_channel_id('u2');
-        _run { $backend->subscribe('u2', 'room', presence => { name => 'Bob' }) };
+        _run { $backend->subscribe('u2', 'room') };
+        _run { $backend->track('room', 'u2', { name => 'Bob' }) };
 
         my $count = _run { $backend->count_presence('room') };
         is($count, 2, 'two users present');
 
-        _run { $backend->unsubscribe('u2', 'room') };
+        _run { $backend->untrack('room', 'u2') };
         $count = _run { $backend->count_presence('room') };
         is($count, 1, 'one user after unsubscribe');
     };
@@ -550,10 +556,10 @@ sub _test_presence {
     subtest 'list_presence with limit — under limit succeeds' => sub {
         my $backend = $factory->();
 
-        $backend->set_channel_id('u1');
-        _run { $backend->subscribe('u1', 'lim.room', presence => { n => 1 }) };
-        $backend->set_channel_id('u2');
-        _run { $backend->subscribe('u2', 'lim.room', presence => { n => 2 }) };
+        _run { $backend->subscribe('u1', 'lim.room') };
+        _run { $backend->track('lim.room', 'u1', { n => 1 }) };
+        _run { $backend->subscribe('u2', 'lim.room') };
+        _run { $backend->track('lim.room', 'u2', { n => 2 }) };
 
         my @presence = _run { $backend->list_presence('lim.room', limit => 5) };
         is(scalar @presence, 2, 'returns 2 entries when under limit of 5');
@@ -562,12 +568,12 @@ sub _test_presence {
     subtest 'list_presence with limit — over limit croaks' => sub {
         my $backend = $factory->();
 
-        $backend->set_channel_id('u1');
-        _run { $backend->subscribe('u1', 'big.room', presence => { n => 1 }) };
-        $backend->set_channel_id('u2');
-        _run { $backend->subscribe('u2', 'big.room', presence => { n => 2 }) };
-        $backend->set_channel_id('u3');
-        _run { $backend->subscribe('u3', 'big.room', presence => { n => 3 }) };
+        _run { $backend->subscribe('u1', 'big.room') };
+        _run { $backend->track('big.room', 'u1', { n => 1 }) };
+        _run { $backend->subscribe('u2', 'big.room') };
+        _run { $backend->track('big.room', 'u2', { n => 2 }) };
+        _run { $backend->subscribe('u3', 'big.room') };
+        _run { $backend->track('big.room', 'u3', { n => 3 }) };
 
         my $err = dies {
             _run { $backend->list_presence('big.room', limit => 2) };
@@ -580,8 +586,8 @@ sub _test_presence {
         my $backend = $factory->();
 
         for my $i (1..3) {
-            $backend->set_channel_id("u$i");
-            _run { $backend->subscribe("u$i", 'scan.room', presence => { n => $i }) };
+            _run { $backend->subscribe("u$i", 'scan.room') };
+            _run { $backend->track('scan.room', "u$i", { n => $i }) };
         }
 
         my ($cursor, @entries) = _run { $backend->scan_presence('scan.room', cursor => 0, count => 10) };
@@ -593,8 +599,8 @@ sub _test_presence {
         my $backend = $factory->();
 
         for my $i (1..5) {
-            $backend->set_channel_id("u$i");
-            _run { $backend->subscribe("u$i", 'page.room', presence => { n => $i }) };
+            _run { $backend->subscribe("u$i", 'page.room') };
+            _run { $backend->track('page.room', "u$i", { n => $i }) };
         }
 
         my @all;
@@ -618,18 +624,22 @@ sub _test_presence {
     subtest 'cleanup removes presence and broadcasts leave' => sub {
         my $backend = $factory->();
 
-        # ch2 subscribes first to receive events
-        $backend->set_channel_id('ch2');
-        _run { $backend->subscribe('ch2', 'room', presence => { user => 'bob' }) };
+        # ch2 subscribes first to receive events (manually mimic facade composition)
+        _run { $backend->subscribe('ch2', 'room') };
+        _run { $backend->track('room', 'ch2', { user => 'bob' }) };
 
-        # ch1 subscribes with presence
-        $backend->set_channel_id('ch1');
-        _run { $backend->subscribe('ch1', 'room', presence => { user => 'alice' }) };
+        # ch1 subscribes with presence (manually mimic facade composition)
+        _run { $backend->subscribe('ch1', 'room') };
+        _run { $backend->track('room', 'ch1', { user => 'alice' }) };
+        _run { $backend->publish('room',
+            $backend->_make_presence_event('room', 'presence.join', { user => 'alice' }),
+            exclude => 'ch1'
+        )};
 
-        # Consume join event
+        # Consume join event from ch2
         _run { $backend->poll('ch2') };
 
-        # Cleanup ch1
+        # Cleanup ch1 - the Role::Presence around-cleanup hook handles untrack and leave broadcast
         _run { $backend->cleanup('ch1') };
 
         # ch2 should get leave event
@@ -722,8 +732,12 @@ sub _test_history {
         _run { $backend->publish('room', { type => 'msg', n => 1 }) };
 
         # Presence event (should not be stored in history)
-        $backend->set_channel_id('user1');
-        _run { $backend->subscribe('user1', 'room', presence => { name => 'User1' }) };
+        _run { $backend->subscribe('user1', 'room') };
+        _run { $backend->track('room', 'user1', { name => 'User1' }) };
+        _run { $backend->publish('room',
+            $backend->_make_presence_event('room', 'presence.join', { name => 'User1' }),
+            exclude => 'user1'
+        )};
 
         # Another regular message
         _run { $backend->publish('room', { type => 'msg', n => 2 }) };
