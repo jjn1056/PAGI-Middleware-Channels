@@ -38,6 +38,39 @@ SKIP: {
         run { $backend_b->flush() };
     };
 
+    subtest 'schedule_delayed sets TTL on delayed ZSET' => sub {
+        my $redis = make_redis(prefix => "test:delayed-ttl:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
+            redis  => $redis,
+            expiry => 3600,  # 1 hour
+        );
+        run { $backend->flush() };
+        run { $backend->send_delayed('ch', { type => 'x' }, 0.1) };
+
+        my $ttl = run { $redis->ttl('delayed') };
+        ok($ttl > 0, "delayed key has TTL set (got $ttl)");
+        ok($ttl <= 3600, "TTL does not exceed expiry");
+
+        run { $backend->flush() };
+    };
+
+    subtest 'schedule_delayed uses unique monotonic IDs' => sub {
+        my $redis = make_redis(prefix => "test:delayed-id:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        # Schedule 100 identical messages at the same delay — each must
+        # serialize to a distinct ZSET member.
+        for (1..100) {
+            run { $backend->send_delayed('ch', { type => 'same' }, 0.5) };
+        }
+
+        my $count = run { $redis->zcard('delayed') };
+        is($count, 100, 'all 100 entries stored as distinct ZSET members');
+
+        run { $backend->flush() };
+    };
+
 }
 
 done_testing;

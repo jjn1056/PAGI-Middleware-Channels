@@ -32,6 +32,7 @@ sub new {
     $self->{_waiters}        = {};
     $self->{_active_fs}      = {};
     $self->{_notify_poll_fs} = [];
+    $self->{_delayed_seq}    = 0;
 
     return $self;
 }
@@ -535,9 +536,11 @@ async sub schedule_delayed {
         type    => $type,
         target  => $target,
         message => $message,
-        id      => rand(),
+        id      => ++$self->{_delayed_seq},
     });
-    await $self->{_redis}->zadd($self->_delayed_key, $delivery_time, $entry);
+    my $key = $self->_delayed_key;
+    await $self->{_redis}->zadd($key, $delivery_time, $entry);
+    await $self->{_redis}->expire($key, $self->{expiry});
     return 1;
 }
 
