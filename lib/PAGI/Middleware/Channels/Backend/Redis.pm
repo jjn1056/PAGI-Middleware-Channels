@@ -401,6 +401,15 @@ async sub flush {
     $self->{_waiters} = {};
     $self->{_pattern_regex_cache} = {};
 
+    # Tear down the background subscriber listener cleanly so its
+    # Future doesn't leak past the backend's lifetime. Next call to
+    # next_message will lazily recreate the subscriber.
+    if (my $f = delete $self->{_listener_f}) {
+        $f->cancel unless $f->is_ready;
+    }
+    delete $self->{_subscription};
+    delete $self->{_subscriber};
+
     return 1 unless @abs_keys;
 
     # Strip prefix so Async::Redis re-applies it exactly once on DEL.
