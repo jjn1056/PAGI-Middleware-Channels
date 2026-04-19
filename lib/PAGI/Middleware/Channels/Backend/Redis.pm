@@ -540,7 +540,8 @@ async sub schedule_delayed {
     });
     my $key = $self->_delayed_key;
     await $self->{_redis}->zadd($key, $delivery_time, $entry);
-    await $self->{_redis}->expire($key, $self->{expiry});
+    # TTL must outlive any legally-schedulable entry; max_delay is that ceiling.
+    await $self->{_redis}->expire($key, $self->{max_delay});
     return 1;
 }
 

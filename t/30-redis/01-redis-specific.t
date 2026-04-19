@@ -38,18 +38,18 @@ SKIP: {
         run { $backend_b->flush() };
     };
 
-    subtest 'schedule_delayed sets TTL on delayed ZSET' => sub {
+    subtest 'schedule_delayed sets TTL that outlasts the delivery time' => sub {
         my $redis = make_redis(prefix => "test:delayed-ttl:$$:");
         my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
-            redis  => $redis,
-            expiry => 3600,  # 1 hour
+            redis     => $redis,
+            max_delay => 3600,  # 1 hour
         );
         run { $backend->flush() };
-        run { $backend->send_delayed('ch', { type => 'x' }, 0.1) };
+        run { $backend->send_delayed('ch', { type => 'x' }, 60) };
 
         my $ttl = run { $redis->ttl('delayed') };
-        ok($ttl > 0, "delayed key has TTL set (got $ttl)");
-        ok($ttl <= 3600, "TTL does not exceed expiry");
+        ok($ttl >= 60,   "TTL outlasts the scheduled delivery (got $ttl)");
+        ok($ttl <= 3600, "TTL does not exceed max_delay");
 
         run { $backend->flush() };
     };
