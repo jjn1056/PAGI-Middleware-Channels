@@ -36,6 +36,7 @@ async sub send_delayed {
     my ($self, $channel, $message, $delay_seconds) = @_;
     $self->_validate_channel($channel);
     $self->_validate_message($message);
+    $self->_validate_delay($delay_seconds);
     return await $self->schedule_delayed(
         'send', $channel, $message, Time::HiRes::time() + $delay_seconds
     );
@@ -45,9 +46,22 @@ async sub publish_delayed {
     my ($self, $topic, $message, $delay_seconds) = @_;
     $self->_validate_topic($topic);
     $self->_validate_message($message);
+    $self->_validate_delay($delay_seconds);
     return await $self->schedule_delayed(
         'publish', $topic, $message, Time::HiRes::time() + $delay_seconds
     );
+}
+
+sub _validate_delay {
+    my ($self, $delay_seconds) = @_;
+    die "InvalidDelay: must be defined"
+        unless defined $delay_seconds;
+    die "InvalidDelay: must be numeric"
+        unless $delay_seconds =~ /^-?\d+(?:\.\d+)?$/;
+    die "InvalidDelay: negative ($delay_seconds)"
+        if $delay_seconds < 0;
+    die "InvalidDelay: $delay_seconds exceeds max_delay $self->{max_delay}"
+        if $delay_seconds > $self->{max_delay};
 }
 
 # Pump delayed messages on every poll.

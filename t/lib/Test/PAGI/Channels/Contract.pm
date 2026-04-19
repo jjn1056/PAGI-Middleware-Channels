@@ -100,6 +100,10 @@ sub run_contract_tests {
         _test_delayed($factory);
     };
 
+    subtest "$label - delayed validation" => sub {
+        _test_delayed_validation($factory);
+    };
+
     subtest "$label - pattern subs" => sub {
         _test_pattern_subs($factory);
     };
@@ -895,6 +899,45 @@ sub _test_delayed {
         is($count, 3, 'processed 3 messages');
     };
 }
+
+sub _test_delayed_validation {
+    my ($factory) = @_;
+
+    subtest 'negative delay rejected' => sub {
+        my $backend = $factory->();
+        like(
+            dies { _run { $backend->send_delayed('ch', { type => 'x' }, -5) } },
+            qr/InvalidDelay/,
+            'send_delayed: negative delay rejected'
+        );
+        like(
+            dies { _run { $backend->publish_delayed('t', { type => 'x' }, -5) } },
+            qr/InvalidDelay/,
+            'publish_delayed: negative delay rejected'
+        );
+    };
+
+    subtest 'delay exceeding max_delay rejected' => sub {
+        my $backend = $factory->(max_delay => 10);
+        like(
+            dies { _run { $backend->send_delayed('ch', { type => 'x' }, 20) } },
+            qr/InvalidDelay/,
+            'send_delayed: over-max delay rejected'
+        );
+        like(
+            dies { _run { $backend->publish_delayed('t', { type => 'x' }, 20) } },
+            qr/InvalidDelay/,
+            'publish_delayed: over-max delay rejected'
+        );
+    };
+
+    subtest 'delay of 0 accepted' => sub {
+        my $backend = $factory->();
+        _run { $backend->send_delayed('ch', { type => 'x' }, 0) };
+        ok(1, 'delay of 0 is accepted');
+    };
+}
+
 sub _test_pattern_subs {
     my ($factory) = @_;
 

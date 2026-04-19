@@ -14,6 +14,7 @@ use constant {
     DEFAULT_GROUP_EXPIRY => 86400,
     DEFAULT_MAX_SIZE     => 1_048_576,
     DEFAULT_HISTORY_SIZE => 0,
+    DEFAULT_MAX_DELAY    => 7 * 24 * 3600,  # 7 days
 };
 
 sub new {
@@ -27,6 +28,7 @@ sub new {
         group_expiry => $args{group_expiry} // DEFAULT_GROUP_EXPIRY,
         max_size     => $args{max_size}     // DEFAULT_MAX_SIZE,
         history_size => $args{history_size} // DEFAULT_HISTORY_SIZE,
+        max_delay    => $args{max_delay}    // DEFAULT_MAX_DELAY,
         # subclass-specific args remain in %args; subclasses store what they need
         %args,
     }, $class;
@@ -174,6 +176,12 @@ Maximum size of a serialized message. Default: 1_048_576 (1 MB).
 =item history_size => $int
 
 Number of messages to retain for the history feature. Default: 0 (disabled).
+
+=item max_delay => $seconds
+
+Maximum allowed delay for C<send_delayed> / C<publish_delayed>. Prevents
+far-future entries from accumulating unbounded in the delayed queue.
+Default: 604800 (7 days).
 
 =back
 
