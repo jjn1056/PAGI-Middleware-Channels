@@ -102,6 +102,25 @@ SKIP: {
         run { $backend->flush() };
     };
 
+    subtest 'pattern regex cache is populated and cleared on flush' => sub {
+        my $redis = make_redis(prefix => "test:pat-cache:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        run { $backend->psubscribe('ch1', 'events.*') };
+        run { $backend->publish('events.click', { type => 'x' }) };
+
+        ok($backend->{_pattern_regex_cache}{'events.*'},
+            'regex cached after first publish match');
+
+        run { $backend->flush() };
+
+        is(
+            $backend->{_pattern_regex_cache}, {},
+            'cache cleared by flush'
+        );
+    };
+
 }
 
 done_testing;

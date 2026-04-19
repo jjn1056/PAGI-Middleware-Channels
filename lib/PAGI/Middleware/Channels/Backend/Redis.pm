@@ -34,6 +34,7 @@ sub new {
     $self->{_active_fs}      = {};
     $self->{_notify_poll_fs} = [];
     $self->{_delayed_seq}    = 0;
+    $self->{_pattern_regex_cache} = {};
 
     # Factory for the dedicated subscriber connection used by next_message.
     # Default mirrors the caller's client's connection params. Returns a
@@ -315,8 +316,13 @@ async sub punsubscribe {
     my $key = $self->_pattern_key($channel);
     if (defined $pattern) {
         await $self->{_redis}->srem($key, $pattern);
+        # Cache invalidation: another channel may still use this pattern,
+        # but re-compiling on demand is cheap and correct.
+        delete $self->{_pattern_regex_cache}{$pattern};
     } else {
         await $self->{_redis}->del($key);
+        # Unknown which patterns were removed — clear entire cache.
+        $self->{_pattern_regex_cache} = {};
     }
 
     return 1;
@@ -369,6 +375,7 @@ async sub flush {
         $_->cancel for grep { !$_->is_ready } @$waiters;
     }
     $self->{_waiters} = {};
+    $self->{_pattern_regex_cache} = {};
 
     return 1 unless @abs_keys;
 
@@ -649,7 +656,8 @@ async sub _list_pattern_subscribers {
         my $patterns_ref = await $self->{_redis}->smembers($self->_pattern_key($channel));
         my @patterns = ref $patterns_ref eq 'ARRAY' ? @$patterns_ref : ();
         for my $pattern (@patterns) {
-            my $regex = $self->_pattern_to_regex($pattern);
+            my $regex = $self->{_pattern_regex_cache}{$pattern}
+                //= $self->_pattern_to_regex($pattern);
             if ($topic =~ $regex) {
                 push @result, $channel;
                 last;
