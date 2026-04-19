@@ -152,26 +152,33 @@ sub _topic_matches_pattern {
     return $topic =~ $regex;
 }
 
-# Helper to deliver to channel (checks capacity).
-# Required by Role::History's subscribe_with_history and Role::PatternSubs.
-async sub _deliver_to_channel {
-    my ($self, $channel, $message) = @_;
+# Deliver a pre-encoded JSON string to a channel. Capacity check fires first;
+# on pass, RPUSH + EXPIRE + PUBLISH are issued concurrently via Future->needs_all.
+async sub _deliver_json_to_channel {
+    my ($self, $channel, $json) = @_;
 
     my $qkey = $self->_queue_key($channel);
     my $len = await $self->{_redis}->llen($qkey);
 
-    if ($len < $self->{capacity}) {
-        my $json = encode_json($message);
-        await $self->{_redis}->rpush($qkey, $json);
-        await $self->{_redis}->expire($qkey, $self->{expiry});
-        await $self->{_redis}->publish($self->_notify_channel($channel), '1');
-        return 1;
-    }
-    return 0;  # Dropped due to full queue
+    return 0 if $len >= $self->{capacity};   # dropped — queue full
+
+    await Future->needs_all(
+        $self->{_redis}->rpush($qkey, $json),
+        $self->{_redis}->expire($qkey, $self->{expiry}),
+        $self->{_redis}->publish($self->_notify_channel($channel), '1'),
+    );
+    return 1;
 }
 
-# Required by Role::History's subscribe_with_history and Role::PatternSubs.
-# Delivers a message to a channel; returns a Future.
+# Legacy hashref-taking helper. Required by Role::History's
+# subscribe_with_history and Role::PatternSubs, which don't have the
+# pre-encoded JSON on hand. Encodes then delegates.
+async sub _deliver_to_channel {
+    my ($self, $channel, $message) = @_;
+    return await $self->_deliver_json_to_channel($channel, encode_json($message));
+}
+
+# Required by Role::History and Role::PatternSubs.
 sub _deliver {
     my ($self, $channel, $message) = @_;
     return $self->_deliver_to_channel($channel, $message);
@@ -358,17 +365,15 @@ async sub publish {
 
     my %excluded = %{ $self->_normalize_exclude($opts{exclude}) };
 
-    my %delivered;  # Track to avoid duplicates
+    my $json = encode_json($message);
 
     # Direct group subscribers
-    my $key = $self->_group_key($topic);
-    my $members_ref = await $self->{_redis}->smembers($key);
+    my $members_ref = await $self->{_redis}->smembers($self->_group_key($topic));
     my @members = ref $members_ref eq 'ARRAY' ? @$members_ref : ();
 
     for my $channel (@members) {
         next if $excluded{$channel};
-        await $self->_deliver_to_channel($channel, $message);
-        $delivered{$channel} = 1;
+        await $self->_deliver_json_to_channel($channel, $json);
     }
 
     return 1;

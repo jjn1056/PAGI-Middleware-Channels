@@ -206,6 +206,29 @@ SKIP: {
         run { $backend->flush() };
     };
 
+    subtest 'publish still drops to full subscribers after pipelining' => sub {
+        my $redis = make_redis(prefix => "test:cap:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
+            redis    => $redis,
+            capacity => 1,
+        );
+        run { $backend->flush() };
+        run { $backend->subscribe('ch1', 'room') };
+
+        # Fill ch1
+        run { $backend->send('ch1', { type => 'fill' }) };
+
+        # Publish should not raise even though ch1 is full.
+        my $ok = run { $backend->publish('room', { type => 'dropped' }) };
+        is($ok, 1, 'publish returns 1 even when subscriber is full');
+
+        # ch1 still only has original message
+        is(run { $backend->poll('ch1') }->{type}, 'fill', 'original survives');
+        is(run { $backend->poll('ch1') }, undef, 'broadcast was dropped');
+
+        run { $backend->flush() };
+    };
+
 }
 
 done_testing;
