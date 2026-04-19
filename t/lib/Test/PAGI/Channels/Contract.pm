@@ -7,6 +7,7 @@ use Future::AsyncAwait;
 use Future;
 use Future::IO;
 use Time::HiRes ();
+use Carp ();
 
 our @EXPORT_OK = qw(run_contract_tests);
 
@@ -15,21 +16,28 @@ sub _run(&);
 # Wraps a subtest body in a `todo` block when the given env var is true.
 # Used to gate tests that expose known drift pending a specific future fix.
 #
-# Exceptions thrown inside the block are caught and turned into fail() calls
-# so that todo's amnesty can cover them (uncaught exceptions bypass todo).
-#
-# CAVEAT: any exception is currently swallowed, not just the expected one.
-# A future regression that throws a *different* exception inside a gated
-# block will be silently amnestied. When this becomes a problem, extend the
-# signature with an $expected_pattern arg and fail (outside todo) when the
-# captured exception doesn't match.
+# $expected_pattern is a regex (qr//) or coderef returning truthy for the
+# expected exception. When gating is active and the code throws, the
+# exception is amnestied ONLY if it matches $expected_pattern; any other
+# exception is re-thrown so we notice regressions.
 sub _maybe_todo {
-    my ($env, $reason, $code) = @_;
+    my ($env, $reason, $code, $expected_pattern) = @_;
+    Carp::croak("_maybe_todo: expected_pattern is required")
+        unless defined $expected_pattern;
+
+    my $matches = ref $expected_pattern eq 'CODE'
+        ? $expected_pattern
+        : sub { $_[0] =~ $expected_pattern };
+
     if ($ENV{$env}) {
         todo $reason => sub {
             eval { $code->(); 1 } or do {
                 my $err = $@;
-                fail("Exception: $err");
+                if ($matches->($err)) {
+                    fail("Exception (expected): $err");
+                } else {
+                    die $err;  # re-throw unexpected exceptions outside todo
+                }
             };
         };
     } else {
@@ -147,7 +155,8 @@ sub _test_core_capacity {
                 });
             };
             is($result->{error}, 'ChannelFull', 'send to full channel fails');
-        }
+        },
+        qr/ChannelFull/,
     );
 }
 
@@ -323,7 +332,8 @@ sub _test_next_message {
                 _run { $backend->send('ch1', { type => 'after-cancel' }) };
                 my $msg = _run { $backend->next_message('ch1') };
                 is($msg->{type}, 'after-cancel', 'next_message works after prior cancel');
-            }
+            },
+            qr/Future::AsyncAwait|cancel|connection/i,
         );
     };
 }
@@ -444,7 +454,8 @@ sub _test_validation {
                 qr/MessageTooLarge/,
                 'oversized message rejected'
             );
-        }
+        },
+        qr/Invalid|MessageTooLarge/,
     );
 }
 
@@ -862,7 +873,8 @@ sub _test_delayed {
                 is(_run { $backend->poll('ch1') }, undef, 'ch1 delayed removed by cleanup');
                 is(_run { $backend->poll('ch2') }->{type}, 'delayed2', 'ch2 delayed survives');
                 is(_run { $backend->poll('ch3') }->{type}, 'pub', 'publish_delayed survives');
-            }
+            },
+            qr/delayed/i,
         );
     };
 
