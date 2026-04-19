@@ -198,6 +198,7 @@ async sub psubscribe {
     my ($self, $channel, $pattern) = @_;
 
     $self->_validate_channel($channel);
+    $self->_validate_pattern($pattern);
 
     my $regex = $self->_pattern_to_regex($pattern);
 

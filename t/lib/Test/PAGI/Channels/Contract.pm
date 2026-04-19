@@ -103,6 +103,10 @@ sub run_contract_tests {
     subtest "$label - pattern subs" => sub {
         _test_pattern_subs($factory);
     };
+
+    subtest "$label - pattern validation" => sub {
+        _test_pattern_validation($factory);
+    };
 }
 
 sub _test_core_send_poll {
@@ -951,6 +955,37 @@ sub _test_pattern_subs {
         ok(_run { $backend->poll('ch1') }, 'received message');
         is(_run { $backend->poll('ch1') }, undef, 'no duplicate from pattern');
     };
+}
+
+sub _test_pattern_validation {
+    my ($factory) = @_;
+    my $backend = $factory->();
+
+    # Empty pattern rejected
+    like(
+        dies { _run { $backend->psubscribe('ch', '') } },
+        qr/InvalidPattern/,
+        'empty pattern rejected'
+    );
+    # Bad chars rejected
+    like(
+        dies { _run { $backend->psubscribe('ch', 'bad pattern with spaces') } },
+        qr/InvalidPattern/,
+        'pattern with spaces rejected'
+    );
+    # Too many segments rejected
+    like(
+        dies { _run { $backend->psubscribe('ch', join('.', map { 'a' } 1..20)) } },
+        qr/InvalidPattern/,
+        'pattern with >16 segments rejected'
+    );
+    # Valid patterns accepted
+    _run { $backend->psubscribe('ch', '*') };
+    _run { $backend->psubscribe('ch', '**') };
+    _run { $backend->psubscribe('ch', 'chat.*') };
+    _run { $backend->psubscribe('ch', 'events.**') };
+    _run { $backend->psubscribe('ch', 'a.b.c.d') };
+    ok(1, 'valid patterns accepted without croaking');
 }
 
 # Helper used by every subtest: synchronously run a Future-returning coderef.

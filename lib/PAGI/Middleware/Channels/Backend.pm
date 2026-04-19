@@ -47,6 +47,22 @@ sub _validate_channel {
 # Topics use the same naming rules as channels.
 sub _validate_topic { goto &_validate_channel }
 
+# Pattern validation. Allowed characters: topic charset (\w, dot, dash, colon)
+# plus literal * and **. Capped at 16 segments to bound ** expansion cost.
+# Backends call this from psubscribe before storing the pattern.
+sub _validate_pattern {
+    my ($self, $pattern) = @_;
+    die "InvalidPattern: empty"    unless defined $pattern && length $pattern;
+    die "InvalidPattern: too long" if length $pattern > 200;
+
+    # Charset: word chars, dot, dash, colon, literal asterisk.
+    die "InvalidPattern: bad chars" unless $pattern =~ /^[\w.\-:*]+$/;
+
+    # Cap segments (dot-separated) at 16.
+    my @segments = split /\./, $pattern, -1;
+    die "InvalidPattern: too many segments" if @segments > 16;
+}
+
 sub _validate_message {
     my ($self, $message) = @_;
     die "InvalidMessage: not a hashref" unless ref $message eq 'HASH';
@@ -216,6 +232,8 @@ Protected methods available to all subclasses:
 =item _validate_channel($name) — dies with C<InvalidChannelName> if invalid
 
 =item _validate_topic($name) — alias for _validate_channel (same rules)
+
+=item _validate_pattern($pattern) — dies with C<InvalidPattern> if invalid
 
 =item _validate_message($msg) — dies with C<InvalidMessage> or C<MessageTooLarge>
 

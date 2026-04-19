@@ -271,6 +271,7 @@ async sub psubscribe {
     my ($self, $channel, $pattern) = @_;
 
     $self->_validate_channel($channel);
+    $self->_validate_pattern($pattern);
 
     # Store pattern association: channel -> pattern (using set to avoid duplicates)
     my $key = $self->_pattern_key($channel);
