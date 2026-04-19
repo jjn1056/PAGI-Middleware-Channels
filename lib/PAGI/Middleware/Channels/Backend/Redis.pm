@@ -79,6 +79,10 @@ sub _notify_channel { $_[0]->_redis_prefix . 'notify:' . $_[1] }
 # Called by the background listener after a pub/sub notification arrives.
 # Each signal_f is a plain Future awaited inside next_message(); we poll
 # for each one and resolve it with the message when poll completes.
+# If poll returns undef (queue drained between notification and poll, or
+# more waiters than messages), the waiter is re-registered so it keeps
+# waiting for the next send. Without this, a single enqueue would resolve
+# every waiter — the extras with undef.
 # The poll Futures are kept alive in _notify_poll_fs to prevent GC.
 sub _notify_waiters {
     my ($self, $channel) = @_;
@@ -89,7 +93,12 @@ sub _notify_waiters {
         push @{$self->{_notify_poll_fs}}, $poll_f;
         $poll_f->on_done(sub {
             my $msg = $_[0];
-            $signal_f->done($msg) unless $signal_f->is_ready;
+            if (defined $msg) {
+                $signal_f->done($msg) unless $signal_f->is_ready;
+            } elsif (!$signal_f->is_ready && !$signal_f->is_cancelled) {
+                # Queue drained — re-register this waiter.
+                push @{$self->{_waiters}{$channel}}, $signal_f;
+            }
             # Remove this poll future from the alive-list
             my $list = $self->{_notify_poll_fs};
             @$list = grep { $_ != $poll_f } @$list if $list;

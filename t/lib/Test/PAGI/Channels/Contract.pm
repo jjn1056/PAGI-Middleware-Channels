@@ -344,6 +344,56 @@ sub _test_next_message {
             qr/Future::AsyncAwait|cancel|connection/i,
         );
     };
+
+    subtest 'two waiters on the same channel: exactly one receives a single send' => sub {
+        my $backend = $factory->();
+
+        _run {
+            (async sub {
+                my $f1 = $backend->next_message('multi.ch');
+                my $f2 = $backend->next_message('multi.ch');
+
+                # One send — only one waiter should resolve; the other stays pending.
+                await $backend->send('multi.ch', { type => 'single' });
+
+                # Give the loop a chance to wake the waiter.
+                await Future::IO->sleep(0.05);
+
+                my $ready_count = ($f1->is_ready ? 1 : 0) + ($f2->is_ready ? 1 : 0);
+                is($ready_count, 1, 'exactly one waiter resolved on a single send');
+
+                # Resolve the lingering waiter so the test tears down cleanly.
+                await $backend->send('multi.ch', { type => 'second' });
+                await Future::IO->sleep(0.05);
+                ok($f1->is_ready && $f2->is_ready, 'both resolved after second send');
+            })->();
+        };
+
+        # Tear down the Redis subscriber listener cleanly.
+        _run { $backend->flush() };
+    };
+
+    subtest 'cancel during delivery: cancelled waiter does not consume message' => sub {
+        my $backend = $factory->();
+
+        _run {
+            (async sub {
+                my $f = $backend->next_message('cancel-race.ch');
+
+                # Cancel BEFORE send — waiter should not consume the upcoming message.
+                $f->cancel;
+
+                await $backend->send('cancel-race.ch', { type => 'survives' });
+                await Future::IO->sleep(0.05);
+
+                # Message should still be in the queue for a subsequent poll.
+                my $msg = await $backend->poll('cancel-race.ch');
+                is($msg->{type}, 'survives', 'message survives cancelled waiter');
+            })->();
+        };
+
+        _run { $backend->flush() };
+    };
 }
 
 sub _test_cleanup {

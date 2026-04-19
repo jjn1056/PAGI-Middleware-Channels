@@ -75,16 +75,32 @@ async sub poll {
 
 # Resolve any futures waiting for messages on this channel.
 # Called by send() and _deliver_to_channel() after enqueueing.
-# Each waiter is a result Future from next_message(); we poll for each one
-# so it gets the enqueued message directly.
+# Feed waiters one at a time until the queue is drained; any unsatisfied
+# waiters are re-registered so they keep waiting for the next send.
+# (Without this, a single enqueue would resolve every waiter — the extras
+# with undef — because poll() on an empty queue returns undef and we
+# would have called ->done(undef) on them.)
 sub _notify_waiters {
     my ($self, $channel) = @_;
     my $waiters = delete $self->{_waiters}{$channel} or return;
-    for my $result_f (@$waiters) {
+
+    # Memory's poll is synchronous (no await in its body), so the Future
+    # returned is already ready and ->get is non-blocking.
+    for my $i (0 .. $#$waiters) {
+        my $result_f = $waiters->[$i];
         next if $result_f->is_ready;
-        $self->poll($channel)->on_done(sub {
-            $result_f->done($_[0]) unless $result_f->is_ready;
-        });
+
+        my $msg = $self->poll($channel)->get;
+        if (defined $msg) {
+            $result_f->done($msg);
+        } else {
+            # Queue drained. Re-register this waiter and the rest; their
+            # on_cancel handlers (installed in next_message) stay intact.
+            push @{$self->{_waiters}{$channel}},
+                grep { !$_->is_ready && !$_->is_cancelled }
+                    @{$waiters}[$i .. $#$waiters];
+            return;
+        }
     }
 }
 
