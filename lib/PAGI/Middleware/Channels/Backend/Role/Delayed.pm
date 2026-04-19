@@ -94,4 +94,15 @@ Backends that support scheduling future C<send>s or C<publish>es C<with>
 this role. The facade exposes this through L<PAGI::Channel>'s
 C<send(..., delay => N)> and C<publish(..., delay => N)> options.
 
+=head1 VALIDATION
+
+=over 4
+
+=item _validate_delay($delay_seconds) — dies with C<InvalidDelay> if the
+delay is undef, non-numeric, negative, or exceeds C<< $self->{max_delay} >>.
+Called by C<send_delayed> and C<publish_delayed>. Composes with the base
+C<_validate_channel>/C<_validate_topic>/C<_validate_message> validators.
+
+=back
+
 =cut

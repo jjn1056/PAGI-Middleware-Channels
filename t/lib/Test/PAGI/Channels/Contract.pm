@@ -931,10 +931,12 @@ sub _test_delayed_validation {
         );
     };
 
-    subtest 'delay of 0 accepted' => sub {
+    subtest 'delay of 0 accepted and delivered via delayed queue' => sub {
         my $backend = $factory->();
-        _run { $backend->send_delayed('ch', { type => 'x' }, 0) };
-        ok(1, 'delay of 0 is accepted');
+        _run { $backend->send_delayed('ch', { type => 'zero' }, 0) };
+        _run { $backend->process_delayed() };
+        my $msg = _run { $backend->poll('ch') };
+        is($msg->{type}, 'zero', 'delay of 0 delivers through delayed queue');
     };
 }
 
