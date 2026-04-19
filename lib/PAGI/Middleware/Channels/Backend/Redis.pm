@@ -71,6 +71,7 @@ sub _presence_key { 'p:'   . $_[1] }
 sub _history_key  { 'h:'   . $_[1] }
 sub _pattern_key  { 'pat:' . $_[1] }
 sub _patterns_index_key { 'patterns:index' }
+sub _memberships_key { 'memberships:' . $_[1] }
 sub _delayed_key  { 'delayed' }
 
 # Notification channel name — must include prefix manually because
@@ -279,6 +280,12 @@ async sub subscribe {
     my $key = $self->_group_key($topic);
     await $self->{_redis}->sadd($key, $channel);
     await $self->{_redis}->expire($key, $self->{group_expiry});
+
+    # Maintain reverse index.
+    my $mkey = $self->_memberships_key($channel);
+    await $self->{_redis}->sadd($mkey, $topic);
+    await $self->{_redis}->expire($mkey, $self->{group_expiry});
+
     return 1;
 }
 
@@ -288,8 +295,8 @@ async sub unsubscribe {
     my ($self, $channel, $topic) = @_;
     $self->_validate_channel($channel);
     $self->_validate_topic($topic);
-    my $key = $self->_group_key($topic);
-    await $self->{_redis}->srem($key, $channel);
+    await $self->{_redis}->srem($self->_group_key($topic), $channel);
+    await $self->{_redis}->srem($self->_memberships_key($channel), $topic);
     return 1;
 }
 
@@ -407,16 +414,16 @@ async sub cleanup {
     # Remove queue
     await $self->{_redis}->del($self->_queue_key($channel));
 
-    # Remove from all groups (no presence broadcast - Role::Presence handles)
-    my $group_keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'g:*');
-    my @group_keys = ref $group_keys_ref eq 'ARRAY' ? @$group_keys_ref : ();
-    for my $abs_key (@group_keys) {
-        my ($topic) = $abs_key =~ /g:(.+)$/;
-        next unless $topic;
+    # Use the memberships reverse index instead of scanning KEYS g:*.
+    my $mkey = $self->_memberships_key($channel);
+    my $topics_ref = await $self->{_redis}->smembers($mkey);
+    my @topics = ref $topics_ref eq 'ARRAY' ? @$topics_ref : ();
+    for my $topic (@topics) {
         await $self->{_redis}->srem($self->_group_key($topic), $channel);
     }
+    await $self->{_redis}->del($mkey);
 
-    # Drop channel's pattern set and its index entry.
+    # Drop channel's pattern set and its index entry (from Task 9).
     await $self->{_redis}->del($self->_pattern_key($channel));
     await $self->{_redis}->srem($self->_patterns_index_key, $channel);
 

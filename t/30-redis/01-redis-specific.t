@@ -147,6 +147,39 @@ SKIP: {
         run { $backend->flush() };
     };
 
+    subtest 'memberships:<channel> reverse index' => sub {
+        my $redis = make_redis(prefix => "test:memb:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        run { $backend->subscribe('ch1', 'room.a') };
+        run { $backend->subscribe('ch1', 'room.b') };
+        run { $backend->subscribe('ch2', 'room.a') };
+
+        my $ch1_ref = run { $redis->smembers('memberships:ch1') };
+        my @ch1 = sort @{ $ch1_ref || [] };
+        is(\@ch1, ['room.a', 'room.b'], 'ch1 memberships indexed');
+
+        run { $backend->unsubscribe('ch1', 'room.a') };
+        $ch1_ref = run { $redis->smembers('memberships:ch1') };
+        @ch1 = sort @{ $ch1_ref || [] };
+        is(\@ch1, ['room.b'], 'unsubscribe updates index');
+
+        # cleanup removes the index entry AND removes ch1 from room.b's group
+        run { $backend->cleanup('ch1') };
+        is(run { $redis->exists('memberships:ch1') }, 0,
+            'cleanup deletes ch1 memberships key');
+        my $room_b_ref = run { $redis->smembers('g:room.b') };
+        my @room_b = @{ $room_b_ref || [] };
+        is(\@room_b, [], 'cleanup removed ch1 from room.b group');
+        # ch2 still in room.a
+        my $room_a_ref = run { $redis->smembers('g:room.a') };
+        my @room_a = @{ $room_a_ref || [] };
+        is(\@room_a, ['ch2'], 'cleanup did not touch other channels');
+
+        run { $backend->flush() };
+    };
+
 }
 
 done_testing;
