@@ -72,6 +72,7 @@ sub _history_key  { 'h:'   . $_[1] }
 sub _pattern_key  { 'pat:' . $_[1] }
 sub _patterns_index_key { 'patterns:index' }
 sub _memberships_key { 'memberships:' . $_[1] }
+sub _presence_channel_key { 'presence:channel:' . $_[1] }
 sub _delayed_key  { 'delayed' }
 
 # Notification channel name — must include prefix manually because
@@ -414,7 +415,7 @@ async sub cleanup {
     # Remove queue
     await $self->{_redis}->del($self->_queue_key($channel));
 
-    # Use the memberships reverse index instead of scanning KEYS g:*.
+    # Memberships reverse index (Task 10).
     my $mkey = $self->_memberships_key($channel);
     my $topics_ref = await $self->{_redis}->smembers($mkey);
     my @topics = ref $topics_ref eq 'ARRAY' ? @$topics_ref : ();
@@ -423,9 +424,14 @@ async sub cleanup {
     }
     await $self->{_redis}->del($mkey);
 
-    # Drop channel's pattern set and its index entry (from Task 9).
+    # Pattern subscription set and patterns index (Task 9).
     await $self->{_redis}->del($self->_pattern_key($channel));
     await $self->{_redis}->srem($self->_patterns_index_key, $channel);
+
+    # Presence reverse index (Task 11). Role::Presence's around-cleanup
+    # already untracks each topic (which SREMs from this set via the
+    # updated untrack); DEL here is defensive.
+    await $self->{_redis}->del($self->_presence_channel_key($channel));
 
     # Cancel any pending next_message futures for this channel
     if (my $futures = delete $self->{_active_fs}{$channel}) {
@@ -446,6 +452,12 @@ async sub track {
     my $json = encode_json($presence_data);
     await $self->{_redis}->hset($key, $channel, $json);
     await $self->{_redis}->expire($key, $self->{group_expiry});
+
+    # Maintain reverse index.
+    my $ckey = $self->_presence_channel_key($channel);
+    await $self->{_redis}->sadd($ckey, $topic);
+    await $self->{_redis}->expire($ckey, $self->{group_expiry});
+
     return 1;
 }
 
@@ -453,8 +465,8 @@ async sub track {
 async sub untrack {
     my ($self, $topic, $channel) = @_;
     $self->_validate_topic($topic);
-    my $key = $self->_presence_key($topic);
-    await $self->{_redis}->hdel($key, $channel);
+    await $self->{_redis}->hdel($self->_presence_key($topic), $channel);
+    await $self->{_redis}->srem($self->_presence_channel_key($channel), $topic);
     return 1;
 }
 
@@ -462,14 +474,12 @@ async sub untrack {
 # Required by Role::Presence.
 async sub _presence_topics_for_channel {
     my ($self, $channel) = @_;
+    my $topics_ref = await $self->{_redis}->smembers($self->_presence_channel_key($channel));
+    my @topics = ref $topics_ref eq 'ARRAY' ? @$topics_ref : ();
     my @result;
-    my $keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'p:*');
-    my @keys = ref $keys_ref eq 'ARRAY' ? @$keys_ref : ();
-    for my $abs_key (@keys) {
-        my ($topic) = $abs_key =~ /p:(.+)$/;
-        next unless $topic;
-        my $pkey = $self->_presence_key($topic);
-        my $json = await $self->{_redis}->hget($pkey, $channel);
+    for my $topic (@topics) {
+        my $json = await $self->{_redis}->hget($self->_presence_key($topic), $channel);
+        # Tolerate stale index entries.
         next unless defined $json;
         push @result, [ $topic, decode_json($json) ];
     }

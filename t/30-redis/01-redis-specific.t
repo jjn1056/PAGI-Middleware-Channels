@@ -180,6 +180,32 @@ SKIP: {
         run { $backend->flush() };
     };
 
+    subtest 'presence:channel:<channel> reverse index' => sub {
+        my $redis = make_redis(prefix => "test:pres-idx:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        run { $backend->track('room1', 'alice', { user => 'alice' }) };
+        run { $backend->track('room2', 'alice', { user => 'alice' }) };
+        run { $backend->track('room1', 'bob',   { user => 'bob'   }) };
+
+        my $alice_ref = run { $redis->smembers('presence:channel:alice') };
+        my @alice = sort @{ $alice_ref || [] };
+        is(\@alice, ['room1', 'room2'], 'alice indexed into two rooms');
+
+        # _presence_topics_for_channel returns topic + data
+        my @entries = run { $backend->_presence_topics_for_channel('alice') };
+        my @topics = sort map { $_->[0] } @entries;
+        is(\@topics, ['room1', 'room2'], 'lookup returns both topics for alice');
+
+        run { $backend->untrack('room1', 'alice') };
+        $alice_ref = run { $redis->smembers('presence:channel:alice') };
+        @alice = sort @{ $alice_ref || [] };
+        is(\@alice, ['room2'], 'untrack updates index');
+
+        run { $backend->flush() };
+    };
+
 }
 
 done_testing;
