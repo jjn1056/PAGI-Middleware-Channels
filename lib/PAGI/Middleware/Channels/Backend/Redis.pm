@@ -36,7 +36,9 @@ sub new {
     $self->{_delayed_seq}    = 0;
 
     # Factory for the dedicated subscriber connection used by next_message.
-    # Default preserves prior behavior (mirror the caller's client).
+    # Default mirrors the caller's client's connection params. Returns a
+    # Future resolving to the connected subscriber; _ensure_subscriber
+    # awaits it, avoiding a blocking ->get in async context.
     $self->{subscriber_factory} = $args{subscriber_factory} || sub {
         my $r = $redis;
         require Async::Redis;
@@ -50,8 +52,7 @@ sub new {
             tls       => $r->{tls},
             reconnect => $r->{reconnect} // 0,
         );
-        $sub->connect->get;
-        return $sub;
+        return $sub->connect->then(sub { Future->done($sub) });
     };
 
     return $self;
