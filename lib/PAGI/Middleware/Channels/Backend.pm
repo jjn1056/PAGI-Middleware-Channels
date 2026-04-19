@@ -58,6 +58,9 @@ sub _validate_pattern {
     # Charset: word chars, dot, dash, colon, literal asterisk.
     die "InvalidPattern: bad chars" unless $pattern =~ /^[\w.\-:*]+$/;
 
+    # Only `*` and `**` are documented wildcards. Reject runs of 3+ asterisks.
+    die "InvalidPattern: wildcard must be * or **" if $pattern =~ /\*{3,}/;
+
     # Cap segments (dot-separated) at 16.
     my @segments = split /\./, $pattern, -1;
     die "InvalidPattern: too many segments" if @segments > 16;

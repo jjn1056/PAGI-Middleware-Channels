@@ -979,6 +979,13 @@ sub _test_pattern_validation {
         qr/InvalidPattern/,
         'pattern with >16 segments rejected'
     );
+    # Triple-asterisk rejected (undocumented wildcard that would compile to a
+    # near-universal regex).
+    like(
+        dies { _run { $backend->psubscribe('ch', 'foo.***') } },
+        qr/InvalidPattern/,
+        'triple-asterisk in a segment rejected'
+    );
     # Valid patterns accepted
     _run { $backend->psubscribe('ch', '*') };
     _run { $backend->psubscribe('ch', '**') };
