@@ -13,6 +13,7 @@ use Future;
 use JSON::MaybeXS qw(encode_json decode_json);
 use Time::HiRes ();
 use Carp ();
+use Scalar::Util qw(blessed);
 use namespace::clean;
 
 sub new {
@@ -102,8 +103,8 @@ async sub _ensure_subscriber {
 
     my $sub = $self->{subscriber_factory}->();
 
-    # The factory may return a connected client or a Future resolving to one.
-    if (ref($sub) && $sub->can('isa') && $sub->isa('Future')) {
+    # Factory may return a connected client or a Future resolving to one.
+    if (blessed($sub) && $sub->isa('Future')) {
         $sub = await $sub;
     }
 
