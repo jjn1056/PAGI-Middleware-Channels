@@ -121,6 +121,32 @@ SKIP: {
         );
     };
 
+    subtest 'patterns:index maintains membership invariants' => sub {
+        my $redis = make_redis(prefix => "test:pat-idx:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        # Initially empty.
+        is(run { $redis->scard('patterns:index') }, 0, 'index empty at start');
+
+        run { $backend->psubscribe('ch-a', 'evt.*') };
+        run { $backend->psubscribe('ch-b', 'log.**') };
+
+        my $members_ref = run { $redis->smembers('patterns:index') };
+        my @members = sort @{ $members_ref || [] };
+        is(\@members, ['ch-a', 'ch-b'], 'both channels in index after psubscribe');
+
+        run { $backend->punsubscribe('ch-a', 'evt.*') };
+        is(run { $redis->scard('patterns:index') }, 1,
+            'ch-a removed from index after its only pattern is dropped');
+
+        run { $backend->cleanup('ch-b') };
+        is(run { $redis->scard('patterns:index') }, 0,
+            'index empty after cleanup of remaining channel');
+
+        run { $backend->flush() };
+    };
+
 }
 
 done_testing;

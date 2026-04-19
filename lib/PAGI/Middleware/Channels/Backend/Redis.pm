@@ -70,6 +70,7 @@ sub _group_key    { 'g:'   . $_[1] }
 sub _presence_key { 'p:'   . $_[1] }
 sub _history_key  { 'h:'   . $_[1] }
 sub _pattern_key  { 'pat:' . $_[1] }
+sub _patterns_index_key { 'patterns:index' }
 sub _delayed_key  { 'delayed' }
 
 # Notification channel name — must include prefix manually because
@@ -304,6 +305,10 @@ async sub psubscribe {
     await $self->{_redis}->sadd($key, $pattern);
     await $self->{_redis}->expire($key, $self->{group_expiry});
 
+    # Maintain reverse index: channel has at least one pattern.
+    await $self->{_redis}->sadd($self->_patterns_index_key, $channel);
+    await $self->{_redis}->expire($self->_patterns_index_key, $self->{group_expiry});
+
     return 1;
 }
 
@@ -323,6 +328,12 @@ async sub punsubscribe {
         await $self->{_redis}->del($key);
         # Unknown which patterns were removed — clear entire cache.
         $self->{_pattern_regex_cache} = {};
+    }
+
+    # If no patterns remain for this channel, drop it from the index.
+    my $remaining = await $self->{_redis}->scard($key);
+    if (!$remaining) {
+        await $self->{_redis}->srem($self->_patterns_index_key, $channel);
     }
 
     return 1;
@@ -404,6 +415,10 @@ async sub cleanup {
         next unless $topic;
         await $self->{_redis}->srem($self->_group_key($topic), $channel);
     }
+
+    # Drop channel's pattern set and its index entry.
+    await $self->{_redis}->del($self->_pattern_key($channel));
+    await $self->{_redis}->srem($self->_patterns_index_key, $channel);
 
     # Cancel any pending next_message futures for this channel
     if (my $futures = delete $self->{_active_fs}{$channel}) {
@@ -646,15 +661,15 @@ async sub _group_members {
 # Required by Role::PatternSubs.
 async sub _list_pattern_subscribers {
     my ($self, $topic) = @_;
-    my $pattern_keys_ref = await $self->{_redis}->keys($self->_redis_prefix . 'pat:*');
-    my @pattern_keys = ref $pattern_keys_ref eq 'ARRAY' ? @$pattern_keys_ref : ();
+    my $channels_ref = await $self->{_redis}->smembers($self->_patterns_index_key);
+    my @channels = ref $channels_ref eq 'ARRAY' ? @$channels_ref : ();
 
     my @result;
-    for my $pkey (@pattern_keys) {
-        my ($channel) = $pkey =~ /pat:(.+)$/;
-        next unless $channel;
+    for my $channel (@channels) {
         my $patterns_ref = await $self->{_redis}->smembers($self->_pattern_key($channel));
         my @patterns = ref $patterns_ref eq 'ARRAY' ? @$patterns_ref : ();
+        # Tolerate stale index entries: no patterns => skip.
+        next unless @patterns;
         for my $pattern (@patterns) {
             my $regex = $self->{_pattern_regex_cache}{$pattern}
                 //= $self->_pattern_to_regex($pattern);
