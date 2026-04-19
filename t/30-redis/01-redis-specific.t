@@ -229,6 +229,63 @@ SKIP: {
         run { $backend->flush() };
     };
 
+    subtest '_ensure_subscriber is lazy — not created until next_message' => sub {
+        my $redis = make_redis(prefix => "test:sub-lazy:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        is($backend->{_subscriber}, undef, 'no subscriber after construction');
+
+        # A pure send/poll/publish should not force a subscriber connection.
+        run { $backend->send('ch', { type => 'x' }) };
+        run { $backend->poll('ch') };
+        is($backend->{_subscriber}, undef, 'no subscriber after send/poll');
+
+        # next_message forces creation.
+        my $f = $backend->next_message('lazy-ch');
+        run { Future::IO->sleep(0.1) };
+        ok(defined $backend->{_subscriber}, 'subscriber created on first next_message');
+
+        $f->cancel;
+        run { $backend->cleanup('lazy-ch') };
+        run { $backend->flush() };
+    };
+
+    subtest 'cleanup cancels outer futures tracked in _active_fs' => sub {
+        my $redis = make_redis(prefix => "test:active-fs:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        my $f = $backend->next_message('active-ch');
+        run { Future::IO->sleep(0.05) };
+        ok(!$f->is_ready, 'future pending before cleanup');
+
+        run { $backend->cleanup('active-ch') };
+        ok($f->is_cancelled, 'future cancelled by cleanup');
+        ok(!exists $backend->{_active_fs}{'active-ch'},
+            '_active_fs entry removed after cleanup');
+
+        run { $backend->flush() };
+    };
+
+    subtest 'flush cancels waiters on all channels' => sub {
+        my $redis = make_redis(prefix => "test:flush-waiters:$$:");
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(redis => $redis);
+        run { $backend->flush() };
+
+        my $f1 = $backend->next_message('fw.ch1');
+        my $f2 = $backend->next_message('fw.ch2');
+        run { Future::IO->sleep(0.05) };
+        ok(!$f1->is_ready && !$f2->is_ready, 'both pending before flush');
+
+        run { $backend->flush() };
+
+        ok($f1->is_cancelled, 'ch1 waiter cancelled by flush');
+        ok($f2->is_cancelled, 'ch2 waiter cancelled by flush');
+        is(scalar(keys %{$backend->{_active_fs}}), 0, '_active_fs cleared');
+        is(scalar(keys %{$backend->{_waiters}}),   0, '_waiters cleared');
+    };
+
 }
 
 done_testing;
