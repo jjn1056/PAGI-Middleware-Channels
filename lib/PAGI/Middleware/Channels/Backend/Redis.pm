@@ -34,6 +34,25 @@ sub new {
     $self->{_notify_poll_fs} = [];
     $self->{_delayed_seq}    = 0;
 
+    # Factory for the dedicated subscriber connection used by next_message.
+    # Default preserves prior behavior (mirror the caller's client).
+    $self->{subscriber_factory} = $args{subscriber_factory} || sub {
+        my $r = $redis;
+        require Async::Redis;
+        my $sub = Async::Redis->new(
+            host      => $r->{host},
+            port      => $r->{port},
+            path      => $r->{path},
+            password  => $r->{password},
+            username  => $r->{username},
+            database  => $r->{database},
+            tls       => $r->{tls},
+            reconnect => $r->{reconnect} // 0,
+        );
+        $sub->connect->get;
+        return $sub;
+    };
+
     return $self;
 }
 
@@ -81,19 +100,13 @@ async sub _ensure_subscriber {
     my ($self) = @_;
     return if $self->{_subscriber};
 
-    my $r = $self->{_redis};
-    require Async::Redis;
-    my $sub = Async::Redis->new(
-        host      => $r->{host},
-        port      => $r->{port},
-        path      => $r->{path},
-        password  => $r->{password},
-        username  => $r->{username},
-        database  => $r->{database},
-        tls       => $r->{tls},
-        reconnect => $r->{reconnect} // 0,
-    );
-    await $sub->connect;
+    my $sub = $self->{subscriber_factory}->();
+
+    # The factory may return a connected client or a Future resolving to one.
+    if (ref($sub) && $sub->can('isa') && $sub->isa('Future')) {
+        $sub = await $sub;
+    }
+
     $self->{_subscriber} = $sub;
 
     # PSUBSCRIBE to all notification channels for this prefix
@@ -695,6 +708,15 @@ Structural keys used in Redis (relative to the client's prefix):
 
 B<Required.> An L<Async::Redis> instance (or anything that ducks the
 same interface). The caller owns the connection lifecycle.
+
+=item subscriber_factory => $coderef
+
+Optional coderef that returns a dedicated L<Async::Redis>-compatible
+connection (or a Future resolving to one) for this backend's pub/sub
+listener. Defaults to a factory that mirrors the caller's C<redis>
+client's connection parameters. Supply your own when you need to
+route the listener through a different connection pool or auth
+context.
 
 =item capacity => $int
 

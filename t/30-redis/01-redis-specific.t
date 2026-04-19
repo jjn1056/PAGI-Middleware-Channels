@@ -71,6 +71,37 @@ SKIP: {
         run { $backend->flush() };
     };
 
+    subtest 'subscriber_factory is used for the subscriber connection' => sub {
+        my $redis = make_redis(prefix => "test:sub-factory:$$:");
+
+        my $factory_called = 0;
+        my $factory = sub {
+            $factory_called++;
+            require Async::Redis;
+            my $sub = Async::Redis->new(
+                uri    => "redis://" . Test::PAGI::Channels::redis_host() . ":" . Test::PAGI::Channels::redis_port(),
+                prefix => $redis->{prefix},
+            );
+            $sub->connect->get;
+            return $sub;
+        };
+
+        my $backend = PAGI::Middleware::Channels::Backend::Redis->new(
+            redis              => $redis,
+            subscriber_factory => $factory,
+        );
+        run { $backend->flush() };
+
+        # Force subscriber creation by awaiting on next_message.
+        my $f = $backend->next_message('sub-factory-ch');
+        run { Future::IO->sleep(0.05) };
+        is($factory_called, 1, 'subscriber_factory was invoked exactly once');
+
+        $f->cancel;
+        run { $backend->cleanup('sub-factory-ch') };
+        run { $backend->flush() };
+    };
+
 }
 
 done_testing;
