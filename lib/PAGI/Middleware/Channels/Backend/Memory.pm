@@ -408,11 +408,21 @@ async sub _record_history {
 }
 
 # History: read_history (required by Role::History)
+# Without 'since': the most recent $count messages, oldest first (legacy).
+# With 'since' => $cursor: every retained message strictly after $cursor.
+# Each returned message is a shallow copy carrying its cursor as _seq.
 async sub read_history {
-    my ($self, $topic, $count) = @_;
-    my @history = @{$self->{history}{$topic} // []};
-    @history = @history[-$count..-1] if @history > $count;
-    return map { $_->{message} } @history;
+    my ($self, $topic, $count, %opts) = @_;
+    my @entries = @{$self->{history}{$topic} // []};
+
+    if (defined $opts{since}) {
+        @entries = grep { $_->{seq} > $opts{since} } @entries;
+    }
+    elsif (@entries > $count) {
+        @entries = @entries[-$count..-1];
+    }
+
+    return map { { %{$_->{message}}, _seq => $_->{seq} } } @entries;
 }
 
 # Delayed: schedule_delayed (required by Role::Delayed)
