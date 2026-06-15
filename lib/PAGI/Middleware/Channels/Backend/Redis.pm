@@ -68,7 +68,7 @@ sub _redis_prefix { $_[0]->{_redis}{prefix} // '' }
 sub _queue_key    { 'q:'   . $_[1] }
 sub _group_key    { 'g:'   . $_[1] }
 sub _presence_key { 'p:'   . $_[1] }
-sub _history_key  { 'h:'   . $_[1] }
+sub _history_key  { 'hs:'  . $_[1] }   # stream key (was the 'h:' LIST)
 sub _pattern_key  { 'pat:' . $_[1] }
 sub _patterns_index_key { 'patterns:index' }
 sub _memberships_key { 'memberships:' . $_[1] }
@@ -581,28 +581,55 @@ async sub scan_presence {
     return ($next_cursor + 0, @entries);
 }
 
-# History: record a message into the history buffer for a topic.
-# Required by Role::History.
+# History: record a message into the history stream for a topic.
+# Required by Role::History. Returns the stream-id cursor, or undef if not
+# recorded (history disabled / presence event).
 async sub _record_history {
     my ($self, $topic, $message) = @_;
-    return 1 unless $self->{history_size} > 0;
-    return 1 if $message->{type} =~ /^presence\./;
+    return undef unless $self->{history_size} > 0;
+    return undef if ($message->{type} // '') =~ /^presence\./;
 
     my $history_key = $self->_history_key($topic);
-    await $self->{_redis}->rpush($history_key, encode_json($message));
-    await $self->{_redis}->ltrim($history_key, -$self->{history_size}, -1);
+    # Exact MAXLEN keeps precisely the last history_size entries (the contract
+    # suite asserts exact retention; '~' approximate trimming would break it).
+    my $id = await $self->{_redis}->xadd(
+        $history_key, 'MAXLEN', $self->{history_size}, '*',
+        'm', encode_json($message),
+    );
     await $self->{_redis}->expire($history_key, $self->{group_expiry});
-    return 1;
+    return $id;
 }
 
-# History: read up to $count recent messages from the history buffer.
-# Required by Role::History.
+# History: read retained messages, each tagged with its _seq (stream id).
+# Required by Role::History. Without 'since': the most recent $count, oldest
+# first. With 'since' => $id: strictly after that id, oldest first.
 async sub read_history {
-    my ($self, $topic, $count) = @_;
+    my ($self, $topic, $count, %opts) = @_;
     my $history_key = $self->_history_key($topic);
-    my $history_ref = await $self->{_redis}->lrange($history_key, -$count, -1);
-    my @history = ref $history_ref eq 'ARRAY' ? @$history_ref : ();
-    return map { decode_json($_) } @history;
+
+    my $rows;
+    if (defined $opts{since}) {
+        # exclusive start: XRANGE key '(<id>' '+'  (already oldest-first)
+        $rows = await $self->{_redis}->xrange($history_key, '(' . $opts{since}, '+');
+    }
+    else {
+        # no-since mode requires a positive count; guard against an undef/0
+        # count reaching XREVRANGE (Redis rejects 'COUNT undef' with an error).
+        return () unless $count;
+        # last $count, newest-first, then reverse to oldest-first
+        $rows = await $self->{_redis}->xrevrange($history_key, '+', '-', 'COUNT', $count);
+        $rows = [ reverse @{ $rows // [] } ];
+    }
+
+    my @out;
+    for my $row (@{ $rows // [] }) {
+        # each $row = [ $id, [ 'm', $json ] ]
+        my ($id, $fields) = @$row;
+        my %f = @{ $fields // [] };
+        my $msg = decode_json($f{m});
+        push @out, { %$msg, _seq => $id };
+    }
+    return @out;
 }
 
 # Delayed: schedule an entry into the delayed ZSET.
@@ -761,7 +788,7 @@ Structural keys used in Redis (relative to the client's prefix):
     q:<channel>     — channel message queue (LIST)
     g:<topic>       — subscription group membership (SET)
     p:<topic>       — presence data (HASH)
-    h:<topic>       — history buffer (LIST)
+    hs:<topic>      — history stream (Redis Stream; entry ids are the opaque _seq cursors)
     pat:<channel>   — pattern subscriptions for a channel (SET)
     delayed         — delayed-delivery queue (ZSET)
 
