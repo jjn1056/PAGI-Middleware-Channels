@@ -57,6 +57,21 @@ PAGI::Middleware::Channels::Backend::Role::History - Optional message history ca
 
 Backends that retain the most recent N messages per topic for replay-on-subscribe
 C<with> this role. The facade exposes this through L<PAGI::Channel>'s
-C<subscribe(...,history => N)> option.
+C<subscribe(..., history =E<gt> N)> option.
+
+=head2 Cursor-resumable history
+
+Recorded messages are delivered (live and on replay) carrying a reserved
+C<_seq> field: an B<opaque cursor> that the issuing backend can compare to mean
+"strictly after". The representation is backend-private -- the Memory backend
+uses a monotonic integer, the Redis backend uses a stream id -- so a consumer
+must treat C<_seq> as opaque and never parse it.
+
+C<read_history($topic, $count, %opts)> and
+C<< PAGI::Channel->subscribe($topic, since =E<gt> $cursor) >> replay every
+retained message B<strictly after> C<$cursor>, oldest first. Resume is exact
+within C<history_size>; a cursor older than the oldest retained entry cannot
+replay the trimmed messages. Pass the last C<_seq> you saw back as C<since> to
+resume after a reconnect (to any fork or node sharing the backend).
 
 =cut

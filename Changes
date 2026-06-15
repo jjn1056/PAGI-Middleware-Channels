@@ -1,0 +1,7 @@
+# Revision history for PAGI-Middleware-Channels
+
+0.001
+  - History is now cursor-resumable: recorded messages are delivered with an
+    opaque _seq cursor (Memory: integer; Redis: stream id), and
+    subscribe/read_history accept since => $cursor to replay strictly after it
+    (within history_size). Enables cross-fork/cross-node stream resume.

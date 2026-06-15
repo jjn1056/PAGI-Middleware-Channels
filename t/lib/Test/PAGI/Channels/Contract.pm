@@ -830,6 +830,28 @@ sub _test_history {
         is($msgs[0]->{n}, 1, 'first history message');
         is($msgs[1]->{n}, 2, 'second history message');
     };
+
+    subtest 'cursor: since replays strictly after; messages carry _seq' => sub {
+        my $backend = $factory->(history_size => 10);
+
+        _run { $backend->publish('room', { type => 'msg', n => 1 }) };
+        _run { $backend->publish('room', { type => 'msg', n => 2 }) };
+        _run { $backend->publish('room', { type => 'msg', n => 3 }) };
+
+        # Read the full window to discover cursors (each carries an opaque _seq)
+        my @all = _run { $backend->read_history('room', 100) };
+        is(scalar @all, 3, 'three messages retained');
+        ok(defined $_->{_seq}, "message n=$_->{n} carries an opaque _seq cursor")
+            for @all;
+
+        # Resume strictly after the first message's cursor
+        my @after = _run { $backend->read_history('room', 100, since => $all[0]{_seq}) };
+        is([map { $_->{n} } @after], [2, 3], 'since returns strictly-after, oldest-first');
+
+        # Echoing the latest cursor yields nothing (caught up)
+        my @none = _run { $backend->read_history('room', 100, since => $all[-1]{_seq}) };
+        is(scalar @none, 0, 'caught-up cursor returns nothing');
+    };
 }
 sub _test_delayed {
     my ($factory) = @_;
