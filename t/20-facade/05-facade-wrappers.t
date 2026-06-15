@@ -77,6 +77,11 @@ subtest 'capability croak — facade rejects unsupported ops' => sub {
         qr/History capability/,
         'subscribe with history croaks without History role'
     );
+    like(
+        dies { run { $ch->subscribe('t', since => 1) } },
+        qr/History capability/,
+        'subscribe with since croaks without History role'
+    );
 };
 
 subtest 'Django compat aliases' => sub {
@@ -151,6 +156,19 @@ subtest 'publish(delay => N) delegates to publish_delayed' => sub {
 
     my $msg = run { $backend->poll('sub1') };
     is($msg->{type}, 'broadcast', 'delivered after delay via facade');
+};
+
+subtest 'facade subscribe passes since-cursor through to the backend' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(history_size => 10);
+    my $ch = PAGI::Channel->new(backend => $backend, channel_name => 'c1');
+    my $c1 = run { $backend->_record_history('room', { type => 'msg', n => 1 }) };
+    run { $backend->_record_history('room', { type => 'msg', n => 2 }) };
+
+    run { $ch->subscribe('room', since => $c1) };
+    my $msg = run { $backend->poll('c1') };
+    is($msg->{n}, 2, 'only messages after the cursor are replayed via the facade');
+    ok($msg->{_seq} > $c1, 'replayed message carries an advanced _seq');
+    is(run { $backend->poll('c1') }, undef, 'nothing before/at the cursor replayed');
 };
 
 done_testing;

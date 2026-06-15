@@ -49,7 +49,7 @@ async sub subscribe {
     my $history_count = delete $opts{history};
     my $presence     = delete $opts{presence};
 
-    if ($history_count) {
+    if ($history_count || defined $opts{since}) {
         $self->_require_capability('History');
         await $self->{backend}->subscribe_with_history(
             $self->{channel_name}, $topic, $history_count, %opts
@@ -212,6 +212,10 @@ options on send/publish/subscribe) croak if the backend does not declare
 the required role. See L<PAGI::Middleware::Channels/BACKEND CAPABILITIES>
 for the matrix.
 
+Recorded messages are delivered with a reserved C<_seq> cursor (opaque; the
+Memory backend uses an integer, Redis a stream id). Pass the last C<_seq> you
+saw back as the C<< subscribe(since => ...) >> option to resume exactly after it.
+
 =head1 CONSTRUCTORS
 
 =head2 from
@@ -288,6 +292,13 @@ Subscribe this connection's channel to a topic. Options:
 =item * C<presence> — Hash of presence data to track for this subscriber. Requires the Presence capability.
 
 =item * C<history> — Number of recent messages to receive immediately on subscribe. Requires the History capability.
+
+=item * C<since> — Opaque cursor (the C<_seq> of the last message this client
+saw). Replays every retained message strictly after it, oldest first, then
+subscribes — for resuming a stream after a reconnect. Requires the History
+capability. Resume is exact within C<history_size>; a cursor older than the
+retained window cannot replay trimmed messages. If both C<since> and
+C<history> are given, C<since> takes precedence and C<history> is ignored.
 
 =back
 
