@@ -24,6 +24,7 @@ sub new {
     $self->{patterns} = {};
     $self->{presence} = {};
     $self->{history}  = {};
+    $self->{history_seq} = {};
     $self->{delayed}  = [];
     $self->{_waiters} = {};
 
@@ -178,6 +179,7 @@ async sub flush {
     $self->{patterns} = {};
     $self->{presence} = {};
     $self->{history}  = {};
+    $self->{history_seq} = {};
     $self->{delayed}  = [];
 
     # Cancel all pending next_message waiters
@@ -385,20 +387,24 @@ sub next_message {
 }
 
 # History: _record_history (required by Role::History)
+# Returns the new opaque cursor for the recorded message, or undef if not
+# recorded (history disabled, or an ephemeral presence event).
 async sub _record_history {
     my ($self, $topic, $message) = @_;
-    return 1 unless $self->{history_size} > 0;
-    return 1 if $message->{type} =~ /^presence\./;
+    return undef unless $self->{history_size} > 0;
+    return undef if ($message->{type} // '') =~ /^presence\./;
 
+    my $seq = ++$self->{history_seq}{$topic};   # monotonic integer per topic
     $self->{history}{$topic} //= [];
     push @{$self->{history}{$topic}}, {
+        seq       => $seq,
         message   => $message,
         timestamp => Time::HiRes::time(),
     };
     while (@{$self->{history}{$topic}} > $self->{history_size}) {
         shift @{$self->{history}{$topic}};
     }
-    return 1;
+    return $seq;
 }
 
 # History: read_history (required by Role::History)
