@@ -10,28 +10,36 @@ requires qw(
     _deliver
 );
 
-# _record_history($topic, $message) -> Future
+# _record_history($topic, $message) -> Future($cursor | undef)
 #   Called by the around-publish hook below. MUST skip messages whose type
-#   matches /^presence\./ - those are ephemeral and not history.
-#   MUST trim to $self->{history_size} entries.
+#   matches /^presence\./ (ephemeral, not history) and MUST trim to
+#   $self->{history_size} entries. Returns the new opaque cursor when it
+#   records, or undef when it does not (history disabled / presence event).
 #
-# read_history($topic, $count) -> Future(@messages)
-#   Most recent $count messages, oldest first. Empty list if no history.
+# read_history($topic, $count, %opts) -> Future(@messages)
+#   Without 'since': the most recent $count messages, oldest first.
+#   With 'since' => $cursor: every retained message strictly after $cursor,
+#   oldest first. Each returned message carries its cursor as a _seq field.
 
-# Wrap publish so it records history before delivering.
+# Wrap publish: record history (assigning a cursor) and, when recorded,
+# deliver a _seq-tagged copy so subscribers can track their resume point.
 around publish => async sub {
     my ($orig, $self, $topic, $message, %opts) = @_;
-    await $self->_record_history($topic, $message);
-    return await $self->$orig($topic, $message, %opts);
+    my $seq = await $self->_record_history($topic, $message);
+    my $delivered = defined $seq ? { %$message, _seq => $seq } : $message;
+    return await $self->$orig($topic, $delivered, %opts);
 };
 
-# Provided default: subscribe + replay history. Backends may override
-# for performance (e.g., transactional batch in PostgreSQL).
+# Provided default: subscribe + replay history (optionally from a cursor).
+# Backends may override for performance.
 async sub subscribe_with_history {
     my ($self, $channel, $topic, $count, %opts) = @_;
-    my @history = await $self->read_history($topic, $count);
+    my $since = delete $opts{since};
+    my @history = await $self->read_history(
+        $topic, $count, (defined $since ? (since => $since) : ()),
+    );
     for my $msg (@history) {
-        await $self->_deliver($channel, $msg);
+        await $self->_deliver($channel, $msg);   # read_history returns _seq-tagged copies (see contract above)
     }
     await $self->subscribe($channel, $topic, %opts);
     return 1;

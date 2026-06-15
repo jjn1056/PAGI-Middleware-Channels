@@ -106,4 +106,32 @@ subtest 'read_history supports since-cursor replay and tags _seq' => sub {
        'read_history does not mutate the stored message');
 };
 
+subtest 'live publish carries _seq; subscribe_with_history honours since' => sub {
+    my $backend = PAGI::Middleware::Channels::Backend::Memory->new(history_size => 10);
+
+    # Live delivery is _seq-tagged
+    run { $backend->subscribe('chan', 't') };
+    run { $backend->publish('t', { type => 'live', n => 1 }) };
+    my $live = run { $backend->poll('chan') };
+    is($live->{n}, 1, 'live message delivered');
+    ok($live->{_seq}, 'live delivery carries _seq');
+
+    # Record two more, then resume strictly after the first of them
+    my $c1 = run { $backend->_record_history('t', { type => 'msg', n => 2 }) };
+    my $c2 = run { $backend->_record_history('t', { type => 'msg', n => 3 }) };
+    run { $backend->subscribe_with_history('chan2', 't', 100, since => $c1) };
+    my $r1 = run { $backend->poll('chan2') };
+    is($r1->{n}, 3, 'replays strictly after the since-cursor');
+    is($r1->{_seq}, $c2, 'replayed message carries its cursor');
+    is(run { $backend->poll('chan2') }, undef, 'nothing else to replay');
+
+    # Round-trip: the _seq a live subscriber saw is itself a valid `since`
+    # cursor (this is exactly how a reconnecting client resumes).
+    run { $backend->subscribe_with_history('chan3', 't', 100, since => $live->{_seq}) };
+    my @from_live;
+    while (defined(my $m = run { $backend->poll('chan3') })) { push @from_live, $m }
+    is([map { $_->{n} } @from_live], [2, 3],
+       'resuming from a live-delivered _seq replays exactly the messages after it');
+};
+
 done_testing;
