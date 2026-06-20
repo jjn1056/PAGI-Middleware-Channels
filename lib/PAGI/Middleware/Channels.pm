@@ -33,20 +33,36 @@ sub wrap {
             'pagi.channel'  => $channel_name,
         });
 
+        # One outstanding protocol receive, kept across calls. A channel message
+        # winning the race must NOT cancel it: cancelling $receive ends the
+        # connection (on an HTTP/SSE stream the next $receive->() would yield a
+        # cancelled future and the app would die after the response started).
+        my $protocol_f;
         my $wrapped_receive = async sub {
             # Fast path: channel message already queued
             if (my $msg = await $self->backend->poll($channel_name)) {
                 return $msg;
             }
 
-            my $protocol_f = $receive->();
-            my $channel_f  = $self->backend->next_message($channel_name);
+            $protocol_f //= $receive->();
+            my $channel_f = $self->backend->next_message($channel_name);
 
-            await Future->wait_any($protocol_f, $channel_f);
+            # Race protocol vs channel via on_ready (not wait_any, which cancels
+            # the loser): this never cancels the long-lived protocol future.
+            my $race = Future->new;
+            $protocol_f->on_ready(sub { $race->done unless $race->is_ready });
+            $channel_f->on_ready(sub  { $race->done unless $race->is_ready });
+            await $race;
 
-            return $channel_f->is_done
-                ? $channel_f->get
-                : $protocol_f->get;
+            if ($channel_f->is_done) {
+                return $channel_f->get;   # channel message wins; keep $protocol_f
+            }
+
+            # Protocol event arrived -- consume it, drop the pending channel waiter.
+            $channel_f->cancel;
+            my $event = $protocol_f->get;
+            undef $protocol_f;
+            return $event;
         };
 
         my $err;
